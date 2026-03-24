@@ -1,0 +1,285 @@
+<?php
+function req_str(string $key, string $default=''): string {
+  return isset($_REQUEST[$key]) ? trim((string)$_REQUEST[$key]) : $default;
+}
+function req_int(string $key, int $default=0): int {
+  return isset($_REQUEST[$key]) ? (int)$_REQUEST[$key] : $default;
+}
+function e(string $s): string {
+  return htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
+}
+function app_url(string $path=''): string {
+  if (defined('APP_URL') && APP_URL !== '') {
+    return APP_URL . BASE_URL . $path;
+  }
+
+  $scheme = 'http';
+  if (!empty($_SERVER['HTTP_X_FORWARDED_PROTO'])) {
+    $scheme = (string)$_SERVER['HTTP_X_FORWARDED_PROTO'];
+  } elseif (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
+    $scheme = 'https';
+  }
+
+  $host = (string)($_SERVER['HTTP_HOST'] ?? 'localhost');
+  return $scheme . '://' . $host . BASE_URL . $path;
+}
+
+function app_url_is_publicly_reachable(?string $url = null): bool {
+  $candidate = trim((string)($url ?? app_url()));
+  if ($candidate === '') {
+    return false;
+  }
+
+  $parts = parse_url($candidate);
+  $host = strtolower(trim((string)($parts['host'] ?? '')));
+  if ($host === '' || $host === 'localhost') {
+    return false;
+  }
+
+  if (filter_var($host, FILTER_VALIDATE_IP)) {
+    return !preg_match('/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.|169\.254\.)/', $host);
+  }
+
+  if ($host === '::1') {
+    return false;
+  }
+
+  return true;
+}
+
+function google_docs_open_url(string $fileUrl): string {
+  return 'https://docs.google.com/gview?embedded=1&url=' . rawurlencode($fileUrl);
+}
+
+function ui_message(string $raw): string {
+  $map = [
+    'uploaded' => 'File uploaded successfully.',
+    'uploaded_private' => 'File uploaded to private storage.',
+    'uploaded_official' => 'File uploaded to official records.',
+    'version_uploaded' => 'File replaced.',
+    'file_replaced' => 'File replaced.',
+    'deleted' => 'File moved to trash.',
+    'moved_to_official' => 'File moved to official records.',
+    'folder_moved_to_official' => 'Folder moved to official records.',
+    'moved_to_private' => 'File moved to private files.',
+    'folder_moved_to_private' => 'Folder moved to private files.',
+    'selection_moved_to_official' => 'Selected items moved to official records.',
+    'selection_moved_to_private' => 'Selected items moved to private files.',
+    'restored' => 'File restored.',
+    'shared' => 'File shared successfully.',
+    'official_only_share' => 'Only official records can be shared with other employees.',
+    'revoked' => 'Access revoked.',
+    'folder_deleted' => 'Folder deleted and files moved to trash.',
+    'trash_selection_deleted' => 'Selected trash items were permanently deleted.',
+    'folder_renamed' => 'Folder renamed.',
+    'trash_emptied' => 'Trash permanently emptied.',
+    'trash_already_empty' => 'Trash is already empty.',
+    'file_creation_disabled' => 'In-app file creation is disabled. Upload files instead.',
+    'name_conflict' => 'A file with the same name already exists in this folder.',
+    'upload_failed' => 'Upload failed. Please try again.',
+    'document_code_required' => 'Doc. ID is required before uploading a document.',
+    'document_title_required' => 'Document title or subject is required.',
+    'signatory_required' => 'Signatory is required.',
+    'document_date_required' => 'Document date is required.',
+    'category_required' => 'Category is required.',
+    'single_upload_required' => 'Upload one document at a time so each file has the correct Doc. ID.',
+    'version_upload_failed' => 'File replacement failed.',
+    'file_replace_failed' => 'File replacement failed.',
+    'trash_empty_failed' => 'Failed to empty trash.',
+    'checkout_taken' => 'This older editing feature is no longer used.',
+    'checked_out' => 'This older editing feature is no longer used.',
+    'checked_in' => 'This older editing feature is no longer used.',
+    'metadata_saved' => 'Document tracking details updated.',
+    'route_saved' => 'Document route updated.',
+    'feature_retired' => 'That older document-management feature is no longer used in this workflow.',
+    'approval_locked' => 'This file is locked for review/approval until the current review cycle is resolved.',
+    'message_sent' => 'Message sent successfully.',
+    'message_invalid' => 'Please enter recipient email and message.',
+    'submitted_for_review' => 'Official record submitted to the section chief.',
+    'review_assignment_accepted' => 'Section chief accepted the document for review.',
+    'review_assignment_declined' => 'Review assignment was declined.',
+    'review_acceptance_required' => 'The section chief must accept the routed document before approving or rejecting it.',
+    'share_accepted' => 'Shared document accepted.',
+    'share_declined' => 'Shared document not accepted.',
+    'response_note_required' => 'Please provide the reason before declining the routed document.',
+    'document_approved' => 'Official record approved and locked.',
+    'document_rejected' => 'Official record rejected. You can edit and resubmit.',
+    'reject_note_required' => 'A rejection note is required.',
+    'decision_already_final' => 'This review decision is already final for the current cycle.',
+    'decision_invalid' => 'Invalid review decision.',
+    'division_required' => 'Assign a division before using this workflow.',
+    'division_chief_required' => 'No section chief is assigned to this division yet.',
+    'private_not_reviewable' => 'Private files cannot enter the review workflow.',
+    'chat_unavailable' => 'Chat is only available for section chiefs and employees.',
+    'reauth_required' => 'Please confirm your password for this action.',
+    'reauth_failed' => 'Password confirmation failed.',
+    'session_expired' => 'Session expired due to inactivity. Please sign in again.',
+    'user_created' => 'User account created. Default password is "password".',
+    'user_deleted' => 'User account permanently deleted.',
+    'updated' => 'Account access updated.',
+    'division_create_failed' => 'Unable to create division. Check the name and assigned chief.',
+    'role_updated' => 'Account role updated.',
+    'password_updated' => 'Account password updated.',
+    'password_too_short' => 'New password must be at least 8 characters.',
+    'password_mismatch' => 'New password confirmation does not match.',
+    'delete_failed' => 'Failed to delete account. Please try again.',
+    'email_exists' => 'An account with this email already exists.',
+    'invalid_email' => 'Please provide a valid email address.',
+    'missing_fields' => 'Please complete all required fields.',
+    'last_admin' => 'This action is blocked because at least one admin must remain.',
+    'self_delete' => 'You cannot delete your own account.',
+    'self' => 'You cannot apply that action to your own account.',
+    'self_role' => 'You cannot change your own role.',
+  ];
+  return $map[$raw] ?? str_replace('_', ' ', $raw);
+}
+
+function meta_key_label(string $key): string {
+  $k = strtolower(trim($key));
+  $map = [
+    'user_id' => 'User ID',
+    'doc_id' => 'Document ID',
+    'document_id' => 'Document ID',
+    'status' => 'Status',
+    'email' => 'Email',
+    'role' => 'Role',
+    'permission' => 'Permission',
+    'folder_id' => 'Folder ID',
+    'version' => 'Version',
+    'version_id' => 'Version ID',
+    'reason' => 'Reason',
+  ];
+  if (isset($map[$k])) {
+    return $map[$k];
+  }
+  return ucwords(str_replace('_', ' ', $k));
+}
+
+function meta_value_label(string $value): string {
+  $v = trim($value);
+  if ($v === '') {
+    return '-';
+  }
+  $upper = strtoupper($v);
+  if ($upper === 'ACTIVE') {
+    return 'Active';
+  }
+  if ($upper === 'DISABLED') {
+    return 'Disabled';
+  }
+  if ($upper === 'ADMIN') {
+    return 'Admin';
+  }
+  if ($upper === 'DIVISION_CHIEF') {
+    return 'Section Chief';
+  }
+  if ($upper === 'EMPLOYEE' || $upper === 'USER') {
+    return 'Employee';
+  }
+  return $v;
+}
+
+function role_label(string $role): string {
+  $v = trim($role);
+  if ($v === '') {
+    return '-';
+  }
+  $upper = strtoupper($v);
+  if ($upper === 'ADMIN') {
+    return 'Admin';
+  }
+  if ($upper === 'DIVISION_CHIEF') {
+    return 'Section Chief';
+  }
+  if ($upper === 'EMPLOYEE' || $upper === 'USER') {
+    return 'Employee';
+  }
+  if ($upper === 'PRIVATE') {
+    return 'Private';
+  }
+  if ($upper === 'OFFICIAL') {
+    return 'Official';
+  }
+  return ucwords(strtolower(str_replace('_', ' ', $v)));
+}
+
+function parse_meta_details(?string $meta): array {
+  $text = trim((string)$meta);
+  if ($text === '' || strtolower($text) === 'n/a') {
+    return [];
+  }
+
+  $parts = array_filter(array_map('trim', explode(',', $text)), static function ($part) {
+    return $part !== '';
+  });
+  $items = [];
+
+  foreach ($parts as $part) {
+    if (strpos($part, '=') !== false) {
+      [$key, $value] = array_pad(explode('=', $part, 2), 2, '');
+      $items[] = [
+        'label' => meta_key_label((string)$key),
+        'value' => meta_value_label((string)$value),
+      ];
+      continue;
+    }
+
+    $items[] = [
+      'label' => 'Note',
+      'value' => meta_value_label((string)$part),
+    ];
+  }
+
+  return $items;
+}
+
+function avatar_initials(string $name): string {
+  $parts = preg_split('/\s+/', trim($name));
+  $initials = '';
+  foreach (array_slice(array_filter($parts), 0, 2) as $part) {
+    $initials .= strtoupper(substr((string)$part, 0, 1));
+  }
+  if ($initials === '') {
+    $initials = strtoupper(substr($name, 0, 2));
+  }
+  return $initials !== '' ? $initials : 'U';
+}
+
+function avatar_photo_url(array $user): ?string {
+  $photo = trim((string)($user['avatar_photo'] ?? ''));
+  if ($photo === '') {
+    return null;
+  }
+  if (!str_starts_with($photo, '/')) {
+    $photo = '/' . $photo;
+  }
+  return BASE_URL . $photo;
+}
+
+function avatar_preset_key(array $user): string {
+  $preset = trim((string)($user['avatar_preset'] ?? ''));
+  if ($preset === '') {
+    return 'preset-ocean';
+  }
+  return preg_match('/^[a-z0-9\-]+$/i', $preset) ? $preset : 'preset-ocean';
+}
+
+function folder_location_label(?string $folderName): string {
+  $name = trim((string)$folderName);
+  return $name !== '' ? $name : 'Top level';
+}
+
+function folder_display_name(?string $folderName): string {
+  $name = trim((string)$folderName);
+  if ($name === '') {
+    return 'Top level';
+  }
+
+  $segments = preg_split('/\s*\/\s*|\s*\\\\\s*|\s+\|\s+/', str_replace(' / ', '/', $name)) ?: [];
+  $segments = array_values(array_filter(array_map(
+    static fn(string $segment): string => trim($segment),
+    $segments
+  ), static fn(string $segment): bool => $segment !== ''));
+
+  return $segments ? (string)end($segments) : $name;
+}

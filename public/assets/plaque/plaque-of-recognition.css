@@ -1,0 +1,290 @@
+:root {
+  --paper: #f5e8bf;
+  --paper-deep: #e4d29d;
+  --ink: #3d2c17;
+  --ink-soft: #6f5b3e;
+  --gold: #b3832d;
+  --gold-soft: rgba(179, 131, 45, 0.18);
+  --frame: #7a5320;
+  --frame-shadow: rgba(54, 31, 9, 0.28);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Montserrat", "Segoe UI", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top, rgba(252, 244, 210, 0.2), transparent 24%),
+    linear-gradient(135deg, #4d3214 0%, #8b5e26 48%, #3c2610 100%);
+}
+
+.plaque-stage {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+
+.plaque-sheet {
+  position: relative;
+  width: min(100%, 980px);
+  min-height: 1320px;
+  padding: 64px 72px 56px;
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.28), transparent 24%),
+    linear-gradient(180deg, #f8eecb 0%, var(--paper) 48%, var(--paper-deep) 100%);
+  border: 14px solid var(--frame);
+  box-shadow:
+    0 28px 56px var(--frame-shadow),
+    inset 0 0 0 2px rgba(255, 247, 220, 0.5),
+    inset 0 0 0 10px rgba(122, 83, 32, 0.12);
+  overflow: hidden;
+}
+
+.plaque-sheet::before,
+.plaque-sheet::after {
+  content: "";
+  position: absolute;
+  inset: 18px;
+  border: 1px solid rgba(122, 83, 32, 0.34);
+  pointer-events: none;
+}
+
+.plaque-sheet::after {
+  inset: 28px;
+  border-color: rgba(179, 131, 45, 0.28);
+}
+
+.plaque-corners span {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border-color: rgba(122, 83, 32, 0.3);
+  border-style: solid;
+}
+
+.plaque-corners span:nth-child(1) {
+  top: 24px;
+  left: 24px;
+  border-width: 2px 0 0 2px;
+}
+
+.plaque-corners span:nth-child(2) {
+  top: 24px;
+  right: 24px;
+  border-width: 2px 2px 0 0;
+}
+
+.plaque-corners span:nth-child(3) {
+  bottom: 24px;
+  right: 24px;
+  border-width: 0 2px 2px 0;
+}
+
+.plaque-corners span:nth-child(4) {
+  bottom: 24px;
+  left: 24px;
+  border-width: 0 0 2px 2px;
+}
+
+.plaque-header {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) 140px;
+  gap: 18px;
+  align-items: start;
+}
+
+.plaque-heading {
+  text-align: center;
+  padding-top: 8px;
+}
+
+.plaque-heading p {
+  margin: 0;
+  font-size: 1.06rem;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+}
+
+.plaque-logo {
+  display: block;
+  width: 100%;
+  object-fit: contain;
+}
+
+.plaque-logo--left {
+  max-height: 200px;
+  justify-self: start;
+}
+
+.plaque-logo--right {
+  max-height: 120px;
+  width: 120px;
+  justify-self: end;
+}
+
+.plaque-award {
+  margin-top: 48px;
+  text-align: center;
+}
+
+.plaque-kicker,
+.plaque-recipient,
+.plaque-body h2,
+.plaque-signature__name {
+  font-family: "Cormorant Garamond", Georgia, serif;
+}
+
+.plaque-kicker {
+  margin: 0;
+  font-size: 3.2rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.plaque-lead,
+.plaque-recipient-label {
+  margin: 16px 0 0;
+  font-size: 1.12rem;
+}
+
+.plaque-recipient {
+  margin: 10px 0 0;
+  font-size: 3.6rem;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  color: #25180b;
+}
+
+.plaque-body {
+  margin-top: 44px;
+  text-align: center;
+}
+
+.plaque-body p,
+.plaque-citation p,
+.plaque-signature__role {
+  margin: 0;
+  font-size: 1.14rem;
+  line-height: 1.8;
+  color: var(--ink-soft);
+}
+
+.plaque-body strong,
+.plaque-citation strong {
+  color: var(--ink);
+}
+
+.plaque-body h2 {
+  margin: 16px 0 10px;
+  font-size: 2.6rem;
+  line-height: 1.08;
+  letter-spacing: 0.04em;
+  color: var(--gold);
+}
+
+.plaque-tagline {
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+.plaque-citation {
+  margin-top: 56px;
+  padding: 28px 32px;
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(255, 249, 228, 0.85), rgba(228, 210, 157, 0.38));
+  border: 1px solid rgba(179, 131, 45, 0.22);
+  text-align: center;
+}
+
+.plaque-signature {
+  margin-top: 120px;
+  text-align: center;
+}
+
+.plaque-signature__line {
+  width: min(360px, 70%);
+  height: 1px;
+  margin: 0 auto 14px;
+  background: linear-gradient(90deg, transparent, rgba(61, 44, 23, 0.6), transparent);
+}
+
+.plaque-signature__name {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.plaque-signature__role {
+  margin-top: 8px;
+}
+
+.plaque-reference {
+  margin-top: 54px;
+  padding-top: 22px;
+  border-top: 1px dashed rgba(122, 83, 32, 0.32);
+}
+
+.plaque-reference img {
+  display: block;
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid rgba(122, 83, 32, 0.18);
+  opacity: 0.82;
+}
+
+@media (max-width: 900px) {
+  .plaque-sheet {
+    min-height: auto;
+    padding: 36px 24px 42px;
+  }
+
+  .plaque-header {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .plaque-logo--left {
+    max-height: 150px;
+  }
+
+  .plaque-logo--right {
+    width: 96px;
+    max-height: 96px;
+  }
+
+  .plaque-kicker {
+    font-size: 2.5rem;
+  }
+
+  .plaque-recipient {
+    font-size: 2.8rem;
+  }
+
+  .plaque-body h2 {
+    font-size: 2rem;
+  }
+
+  .plaque-body p,
+  .plaque-citation p,
+  .plaque-signature__role,
+  .plaque-heading p {
+    font-size: 1rem;
+  }
+
+  .plaque-signature {
+    margin-top: 72px;
+  }
+
+  .plaque-signature__name {
+    font-size: 1.6rem;
+  }
+}

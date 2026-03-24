@@ -1,0 +1,30 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Dependencies
+/vendor/
+/node_modules/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Logs / temp files
+*.log
+*.tmp
+*.cache
+
+# Archives / database dumps
+*.zip
+*.sql
+
+# Project-generated storage
+/backups/
+/storage/secrets/
+/storage/documents/
+/storage/cloudflared.exe
+/storage/*.log
