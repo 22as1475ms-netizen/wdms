@@ -10,7 +10,7 @@ function e(string $s): string {
 }
 function app_url(string $path=''): string {
   if (defined('APP_URL') && APP_URL !== '') {
-    return APP_URL . BASE_URL . $path;
+    return APP_URL . wdms_base_url_path($path);
   }
 
   $scheme = 'http';
@@ -21,7 +21,7 @@ function app_url(string $path=''): string {
   }
 
   $host = (string)($_SERVER['HTTP_HOST'] ?? 'localhost');
-  return $scheme . '://' . $host . BASE_URL . $path;
+  return $scheme . '://' . $host . wdms_base_url_path($path);
 }
 
 function app_url_is_publicly_reachable(?string $url = null): bool {
@@ -54,20 +54,20 @@ function google_docs_open_url(string $fileUrl): string {
 function ui_message(string $raw): string {
   $map = [
     'uploaded' => 'File uploaded successfully.',
-    'uploaded_private' => 'File uploaded to private storage.',
-    'uploaded_official' => 'File uploaded to official records.',
+    'uploaded_private' => 'File uploaded to the routed workspace.',
+    'uploaded_official' => 'File uploaded to the routed workspace.',
     'version_uploaded' => 'File replaced.',
     'file_replaced' => 'File replaced.',
     'deleted' => 'File moved to trash.',
-    'moved_to_official' => 'File moved to official records.',
-    'folder_moved_to_official' => 'Folder moved to official records.',
-    'moved_to_private' => 'File moved to private files.',
-    'folder_moved_to_private' => 'Folder moved to private files.',
-    'selection_moved_to_official' => 'Selected items moved to official records.',
-    'selection_moved_to_private' => 'Selected items moved to private files.',
+    'moved_to_official' => 'This older storage move is no longer used.',
+    'folder_moved_to_official' => 'This older storage move is no longer used.',
+    'moved_to_private' => 'This older storage move is no longer used.',
+    'folder_moved_to_private' => 'This older storage move is no longer used.',
+    'selection_moved_to_official' => 'This older storage move is no longer used.',
+    'selection_moved_to_private' => 'This older storage move is no longer used.',
     'restored' => 'File restored.',
     'shared' => 'File shared successfully.',
-    'official_only_share' => 'Only official records can be shared with other employees.',
+    'official_only_share' => 'This older sharing restriction is no longer used.',
     'revoked' => 'Access revoked.',
     'folder_deleted' => 'Folder deleted and files moved to trash.',
     'trash_selection_deleted' => 'Selected trash items were permanently deleted.',
@@ -95,21 +95,21 @@ function ui_message(string $raw): string {
     'approval_locked' => 'This file is locked for review/approval until the current review cycle is resolved.',
     'message_sent' => 'Message sent successfully.',
     'message_invalid' => 'Please enter recipient email and message.',
-    'submitted_for_review' => 'Official record submitted to the section chief.',
+    'submitted_for_review' => 'Routed file submitted to the section chief.',
     'review_assignment_accepted' => 'Section chief accepted the document for review.',
     'review_assignment_declined' => 'Review assignment was declined.',
     'review_acceptance_required' => 'The section chief must accept the routed document before approving or rejecting it.',
     'share_accepted' => 'Shared document accepted.',
     'share_declined' => 'Shared document not accepted.',
     'response_note_required' => 'Please provide the reason before declining the routed document.',
-    'document_approved' => 'Official record approved and locked.',
-    'document_rejected' => 'Official record rejected. You can edit and resubmit.',
+    'document_approved' => 'Routed file approved and locked.',
+    'document_rejected' => 'Routed file rejected. You can edit and resubmit.',
     'reject_note_required' => 'A rejection note is required.',
     'decision_already_final' => 'This review decision is already final for the current cycle.',
     'decision_invalid' => 'Invalid review decision.',
     'division_required' => 'Assign a division before using this workflow.',
     'division_chief_required' => 'No section chief is assigned to this division yet.',
-    'private_not_reviewable' => 'Private files cannot enter the review workflow.',
+    'private_not_reviewable' => 'This older storage rule is no longer used in the routed workflow.',
     'chat_unavailable' => 'Chat is only available for section chiefs and employees.',
     'reauth_required' => 'Please confirm your password for this action.',
     'reauth_failed' => 'Password confirmation failed.',
@@ -121,6 +121,7 @@ function ui_message(string $raw): string {
     'role_updated' => 'Account role updated.',
     'password_updated' => 'Account password updated.',
     'password_too_short' => 'New password must be at least 8 characters.',
+    'account_disabled' => 'Your account is currently disabled. Please contact an administrator.',
     'password_mismatch' => 'New password confirmation does not match.',
     'delete_failed' => 'Failed to delete account. Please try again.',
     'email_exists' => 'An account with this email already exists.',
@@ -253,7 +254,7 @@ function avatar_photo_url(array $user): ?string {
   if (!str_starts_with($photo, '/')) {
     $photo = '/' . $photo;
   }
-  return BASE_URL . $photo;
+  return wdms_base_url_path($photo);
 }
 
 function avatar_preset_key(array $user): string {

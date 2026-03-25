@@ -123,8 +123,9 @@ $notificationTone = static function (array $n): array {
           <?php endif; ?>
           <span class="app-nav-search__shell">
             <i class="bi bi-search app-nav-search__icon" aria-hidden="true"></i>
-            <input class="form-control app-nav-search__input" type="search" name="q" placeholder="Search tabs, files, folders, settings" value="<?= e((string)($_GET['q'] ?? '')) ?>">
+            <input class="form-control app-nav-search__input" type="search" name="q" placeholder="Search tabs, files, folders, settings" value="<?= e((string)($_GET['q'] ?? '')) ?>" autocomplete="off" aria-expanded="false" aria-controls="app-nav-search-suggestions">
             <button class="btn btn-primary btn-sm app-nav-search__btn" type="submit">Search</button>
+            <div class="app-nav-search__suggestions d-none" id="app-nav-search-suggestions" role="listbox" aria-label="Search suggestions"></div>
           </span>
         </form>
       <?php endif; ?>
@@ -213,18 +214,6 @@ $notificationTone = static function (array $n): array {
                 </span>
                 <span class="app-theme-toggle__switch" aria-hidden="true"><span class="app-theme-toggle__thumb"></span></span>
               </button>
-              <button class="dropdown-item app-theme-toggle" type="button" id="toggle-performance-mode">
-                <span class="app-theme-toggle__copy">
-                  <i class="bi bi-speedometer2" id="toggle-performance-icon"></i>
-                  <span>
-                    <strong>Performance mode</strong>
-                    <small id="toggle-performance-label">Auto</small>
-                  </span>
-                </span>
-                <span class="app-theme-toggle__value" id="toggle-performance-value">Auto</span>
-              </button>
-              <button class="dropdown-item" type="button" id="open-onboarding-guide"><i class="bi bi-signpost-split me-2"></i>How to use WDMS</button>
-              <div class="dropdown-divider"></div>
               <form method="POST" action="<?= BASE_URL ?>/logout" class="js-confirm m-0" data-confirm-message="Log out now?">
                 <?= csrf_field() ?>
                 <button type="submit" class="dropdown-item text-danger"><i class="bi bi-box-arrow-right me-2"></i>Logout</button>
@@ -237,4 +226,155 @@ $notificationTone = static function (array $n): array {
   </div>
 </nav>
 <?php endif; ?>
+<script>
+  (function () {
+    const navSearchForm = document.querySelector('.app-nav-search');
+    if (!navSearchForm) return;
+
+    const navSearchInput = navSearchForm.querySelector('input[name="q"]');
+    const suggestionPanel = document.getElementById('app-nav-search-suggestions');
+    if (!navSearchInput) return;
+
+    let lastSubmittedValue = String(navSearchInput.value || '');
+    let latestSuggestionQuery = '';
+
+    function getNavSearchDataset() {
+      if (!Array.isArray(window.wdmsNavSearchDataset)) {
+        return [];
+      }
+      return window.wdmsNavSearchDataset;
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function closeSuggestions() {
+      if (!suggestionPanel) return;
+      suggestionPanel.classList.add('d-none');
+      suggestionPanel.innerHTML = '';
+      navSearchInput.setAttribute('aria-expanded', 'false');
+    }
+
+    function openSuggestions() {
+      if (!suggestionPanel) return;
+      suggestionPanel.classList.remove('d-none');
+      navSearchInput.setAttribute('aria-expanded', 'true');
+    }
+
+    function buildSuggestionMarkup(items) {
+      return items.map(function (item) {
+        if (item.action) {
+          return ''
+            + '<button class="app-nav-search__suggestion app-nav-search__suggestion--button" type="button" data-search-action="' + escapeHtml(item.action) + '" role="option">'
+            + '  <span class="app-nav-search__suggestion-copy">'
+            + '    <strong>' + escapeHtml(item.label || '') + '</strong>'
+            + '    <small>' + escapeHtml(item.meta || '') + '</small>'
+            + '  </span>'
+            + '  <i class="bi bi-magic app-nav-search__suggestion-icon" aria-hidden="true"></i>'
+            + '</button>';
+        }
+        return ''
+          + '<a class="app-nav-search__suggestion" href="' + escapeHtml(item.href || '#') + '" role="option">'
+          + '  <span class="app-nav-search__suggestion-copy">'
+          + '    <strong>' + escapeHtml(item.label || '') + '</strong>'
+          + '    <small>' + escapeHtml(item.meta || '') + '</small>'
+          + '  </span>'
+          + '  <i class="bi bi-arrow-up-right app-nav-search__suggestion-icon" aria-hidden="true"></i>'
+          + '</a>';
+      }).join('');
+    }
+
+    function renderSuggestions(query) {
+      if (!suggestionPanel) return;
+      const trimmedQuery = String(query || '').trim().toLowerCase();
+      latestSuggestionQuery = trimmedQuery;
+      if (trimmedQuery.length < 1) {
+        closeSuggestions();
+        return;
+      }
+
+      const matches = getNavSearchDataset().filter(function (item) {
+        const haystack = String(item.keywords || '').toLowerCase();
+        return haystack.indexOf(trimmedQuery) !== -1;
+      }).slice(0, 8);
+
+      if (!matches.length) {
+        suggestionPanel.innerHTML = '<div class="app-nav-search__empty">No matching items yet.</div>';
+        openSuggestions();
+        return;
+      }
+
+      suggestionPanel.innerHTML = buildSuggestionMarkup(matches);
+      openSuggestions();
+    }
+
+    navSearchInput.addEventListener('input', function () {
+      renderSuggestions(navSearchInput.value);
+    });
+
+    navSearchInput.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter') {
+        return;
+      }
+      lastSubmittedValue = '__force_submit__';
+      closeSuggestions();
+    });
+
+    navSearchForm.addEventListener('submit', function () {
+      closeSuggestions();
+      lastSubmittedValue = String(navSearchInput.value || '');
+    });
+
+    if (suggestionPanel) {
+      suggestionPanel.addEventListener('click', function (event) {
+        const actionTrigger = event.target.closest('[data-search-action]');
+        if (!actionTrigger) {
+          return;
+        }
+        const action = actionTrigger.getAttribute('data-search-action') || '';
+        closeSuggestions();
+        if (action === 'toggle-dark-mode') {
+          const toggleColorModeBtn = document.getElementById('toggle-color-mode');
+          if (toggleColorModeBtn) {
+            toggleColorModeBtn.click();
+          }
+          return;
+        }
+        if (action === 'logout') {
+          const logoutForm = document.querySelector('form[action="<?= BASE_URL ?>/logout"]');
+          if (logoutForm) {
+            if (typeof logoutForm.requestSubmit === 'function') {
+              logoutForm.requestSubmit();
+              return;
+            }
+            logoutForm.submit();
+          }
+        }
+      });
+    }
+
+    navSearchInput.addEventListener('focus', function () {
+      renderSuggestions(navSearchInput.value);
+    });
+
+    document.addEventListener('click', function (event) {
+      if (navSearchForm.contains(event.target)) {
+        return;
+      }
+      closeSuggestions();
+    });
+
+    window.addEventListener('wdms-nav-search-data-ready', function () {
+      if (document.activeElement === navSearchInput || latestSuggestionQuery) {
+        renderSuggestions(navSearchInput.value);
+      }
+    });
+  })();
+</script>
 <div class="container-fluid app-shell">

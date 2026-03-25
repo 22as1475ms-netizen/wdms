@@ -35,7 +35,7 @@ if (!function_exists('admin_badge_class')) {
   function admin_badge_class(string $value, string $type = 'status'): string {
     $normalized = strtoupper(trim($value));
     if ($type === 'area') {
-      return $normalized === 'OFFICIAL' ? 'is-official' : 'is-private';
+      return 'is-official';
     }
     if ($type === 'priority') {
       return match ($normalized) {
@@ -139,7 +139,7 @@ if ($selectedUser) {
         <div class="table-card__header">
           <div>
             <h2><i class="bi bi-people me-1"></i>Accounts</h2>
-            <p>Select an account to inspect private and official storage.</p>
+            <p>Select an account to inspect routed files, tracking activity, and trash.</p>
           </div>
         </div>
         <div class="table-card__body admin-user-list">
@@ -174,8 +174,7 @@ if ($selectedUser) {
               <p><?= e((string)$selectedUser['email']) ?> | <?= e(role_label((string)$selectedUser['role'])) ?> | <?= e((string)($selectedUser['division_name'] ?? 'No division')) ?></p>
             </div>
             <div class="drive-actions">
-              <a class="btn btn-sm btn-outline-secondary" href="<?= BASE_URL ?>/documents?tab=private&user_id=<?= (int)$selectedUser['id'] ?>">Private</a>
-              <a class="btn btn-sm btn-outline-secondary" href="<?= BASE_URL ?>/documents?tab=official&user_id=<?= (int)$selectedUser['id'] ?>">Official</a>
+              <a class="btn btn-sm btn-outline-secondary" href="<?= BASE_URL ?>/documents?tab=routed&user_id=<?= (int)$selectedUser['id'] ?>">Routed Files</a>
             </div>
           </div>
           <div class="table-card__body">
@@ -192,11 +191,7 @@ if ($selectedUser) {
                   <div class="admin-employee-spotlight__identity">
                     <p class="admin-employee-spotlight__eyebrow">Employee workspace overview</p>
                     <h3><?= e((string)$selectedUser['name']) ?></h3>
-                    <p>
-                      <?= e(role_label((string)$selectedUser['role'])) ?>
-                      • <?= e((string)($selectedUser['division_name'] ?? 'No division')) ?>
-                      • <?= e((string)$selectedUser['status']) ?>
-                    </p>
+                    <p><?= e(role_label((string)($selectedUser['role'] ?? 'EMPLOYEE'))) ?> | <?= e((string)($selectedUser['division_name'] ?? 'No division')) ?> | <?= e((string)($selectedUser['status'] ?? 'ACTIVE')) ?></p>
                     <div class="admin-employee-spotlight__meta">
                       <span><i class="bi bi-envelope me-1"></i><?= e((string)$selectedUser['email']) ?></span>
                       <span><i class="bi bi-calendar2-week me-1"></i>Joined <?= e($selectedJoined) ?></span>
@@ -225,14 +220,14 @@ if ($selectedUser) {
 
               <div class="admin-overview-metrics">
                 <article class="admin-overview-metric-card">
-                  <span>Private storage</span>
-                  <strong><?= (int)($selectedSummary['private_count'] ?? 0) ?></strong>
-                  <small>employee-owned working files</small>
+                  <span>Routed storage</span>
+                  <strong><?= (int)(($selectedSummary['private_count'] ?? 0) + ($selectedSummary['official_count'] ?? 0)) ?></strong>
+                  <small>all files currently in the routed workspace</small>
                 </article>
                 <article class="admin-overview-metric-card">
-                  <span>Official storage</span>
+                  <span>Tracked records</span>
                   <strong><?= (int)($selectedSummary['official_count'] ?? 0) ?></strong>
-                  <small>published or released records</small>
+                  <small>files with current route activity or review state</small>
                 </article>
                 <article class="admin-overview-metric-card">
                   <span>Incoming / outgoing</span>

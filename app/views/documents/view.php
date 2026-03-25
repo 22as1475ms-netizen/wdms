@@ -11,8 +11,7 @@ $isPendingSharedRecipient = in_array($level, ['viewer_pending', 'editor_pending'
 $isDeclinedSharedRecipient = in_array($level, ['viewer_declined', 'editor_declined'], true);
 $isPendingReviewer = $level === 'division_chief_pending';
 $isDeclinedReviewer = $level === 'division_chief_declined';
-$isOfficial = strtoupper((string)($doc['storage_area'] ?? 'PRIVATE')) === 'OFFICIAL';
-$backTab = $isOfficial ? 'official' : 'private';
+$backTab = 'routed';
 $categoryLabel = trim((string)($doc['category'] ?? '')) !== '' ? (string)$doc['category'] : 'No category';
 $preview = $preview ?? ['kind' => 'none', 'message' => 'No preview available.'];
 $statusLabel = trim((string)($doc['status'] ?? 'Draft'));
@@ -27,14 +26,14 @@ $directionLabel = strtoupper((string)($doc['document_type'] ?? 'INCOMING')) === 
 $routingLabel = strtoupper((string)($doc['routing_status'] ?? 'NOT_ROUTED')) === 'ROUTED' ? 'Routed' : 'Not routed';
 $routingLabel = match (strtoupper((string)($doc['routing_status'] ?? 'AVAILABLE'))) {
   'PENDING_SHARE_ACCEPTANCE' => 'Pending recipient acceptance',
-  'SHARE_ACCEPTED' => 'Shared and accepted',
-  'SHARE_DECLINED' => 'Share declined',
+  'SHARE_ACCEPTED' => 'In recipient custody',
+  'SHARE_DECLINED' => 'Returned to owner',
   'PENDING_REVIEW_ACCEPTANCE' => 'Pending section chief acceptance',
-  'IN_REVIEW' => 'In review',
-  'REVIEW_ASSIGNMENT_DECLINED' => 'Review assignment declined',
+  'IN_REVIEW' => 'In section chief review',
+  'REVIEW_ASSIGNMENT_DECLINED' => 'Returned to owner',
   'APPROVED' => 'Approved',
   'REJECTED' => 'Rejected',
-  default => 'Available',
+  default => 'Available with owner',
 };
 $priorityLabel = match (strtoupper((string)($doc['priority_level'] ?? 'NORMAL'))) {
   'LOW' => 'Low',
@@ -58,18 +57,21 @@ foreach ($shareRecipients as $recipient) {
   }
   $shareRecipientGroups[$groupKey]['items'][] = $recipient;
 }
+$roleLabels = [
+  'ADMIN' => 'Admin',
+  'DIVISION_CHIEF' => 'Division Chief',
+  'EMPLOYEE' => 'Employee',
+];
+$activeRoutingStatuses = ['PENDING_SHARE_ACCEPTANCE', 'SHARE_ACCEPTED', 'PENDING_REVIEW_ACCEPTANCE', 'IN_REVIEW'];
+$isShareLocked = in_array(strtoupper((string)($doc['routing_status'] ?? 'AVAILABLE')), $activeRoutingStatuses, true);
 ?>
 
 <div class="workspace-page">
   <section class="workspace-toolbar">
     <div>
-      <div class="section-eyebrow"><?= $isOfficial ? 'Official Record' : 'Private File' ?></div>
+      <div class="section-eyebrow">Preview</div>
       <h1 class="drive-title"><?= e($docTitle) ?></h1>
-      <p class="muted-copy">
-        <?= e($docCode) ?> |
-        Owner: <?= e((string)$doc['owner_name']) ?> |
-        Division: <?= e((string)($doc['division_name'] ?? 'Unassigned')) ?><?= $isOfficial ? ' | Status: ' . e((string)($doc['status'] ?? 'Draft')) : '' ?>
-      </p>
+      <p class="muted-copy"><?= e($docCode !== 'Uncoded' ? $docCode : (string)$doc['name']) ?></p>
     </div>
     <div class="drive-actions">
       <a class="btn btn-light btn-sm" href="<?= BASE_URL ?>/documents?tab=<?= $isReviewer && $role === 'DIVISION_CHIEF' ? 'division_queue' : $backTab ?><?= $role === 'ADMIN' ? '&user_id='.(int)$returnUserId : '' ?>">Back</a>
@@ -92,31 +94,7 @@ foreach ($shareRecipients as $recipient) {
     <div class="alert alert-info">Open with Google Docs is unavailable on this setup because the file URL is not publicly reachable yet. It will work after WDMS is deployed on a public domain or the file is made internet-accessible.</div>
   <?php endif; ?>
 
-  <section class="metric-grid">
-    <article class="metric-card">
-      <div class="metric-card__label">Current location</div>
-      <div class="metric-card__value"><?= e((string)($doc['current_location'] ?? 'Unspecified')) ?></div>
-      <div class="metric-card__meta"><?= e($routingLabel) ?></div>
-    </article>
-    <article class="metric-card">
-      <div class="metric-card__label">Document profile</div>
-      <div class="metric-card__value"><?= e($directionLabel) ?></div>
-      <div class="metric-card__meta"><?= e($priorityLabel) ?> priority</div>
-    </article>
-    <article class="metric-card">
-      <div class="metric-card__label">Tracking date</div>
-      <div class="metric-card__value"><?= e($documentDateLabel) ?></div>
-      <div class="metric-card__meta"><?= e((string)($doc['signatory'] ?? 'No signatory')) ?></div>
-    </article>
-    <article class="metric-card">
-      <div class="metric-card__label">Review history</div>
-      <div class="metric-card__value"><?= count($reviews ?? []) ?></div>
-      <div class="metric-card__meta"><?= count($routes ?? []) ?> route update(s)</div>
-    </article>
-  </section>
-
-  <div class="document-detail-layout">
-    <section class="details-card document-preview-card">
+  <section class="details-card document-preview-card">
       <div class="details-card__title">Preview</div>
       <?php if(($preview['kind'] ?? '') === 'pdf'): ?>
         <iframe
@@ -158,254 +136,183 @@ foreach ($shareRecipients as $recipient) {
       <?php else: ?>
         <div class="drive-note drive-note--soft"><?= e((string)($preview['message'] ?? 'Preview unavailable.')) ?></div>
       <?php endif; ?>
-    </section>
+  </section>
 
-    <div class="details-grid document-detail-sidebar">
-      <section class="details-card">
-      <div class="details-card__title">Current file</div>
-      <?php if($canEditFile && $canViewFile): ?>
-        <form method="POST" action="<?= BASE_URL ?>/documents/replace?id=<?= (int)$doc['id'] ?>" enctype="multipart/form-data" class="drive-form-stack mb-3">
-          <?= csrf_field() ?>
-          <input class="form-control drive-input" type="file" name="file" required>
-          <button class="btn btn-primary" type="submit">Replace file</button>
-        </form>
-      <?php endif; ?>
+</div>
 
-      <div class="drive-note drive-note--soft">
-        This page keeps only the current file available for preview and download.
-      </div>
-      <?php if($canViewFile): ?>
-        <div class="mt-3">
-          <a class="btn btn-outline-secondary btn-sm" href="<?= BASE_URL ?>/documents/download?id=<?= (int)$doc['id'] ?>">Download current file</a>
-        </div>
-      <?php endif; ?>
-      </section>
-
-      <aside class="details-card">
-      <div class="details-card__title">Tracking details</div>
-      <div class="drive-note drive-note--soft mb-3">
-        <strong>File name:</strong> <?= e((string)$doc['name']) ?><br>
-        <strong>Category:</strong> <?= e($categoryLabel) ?><br>
-        <strong>Sharing:</strong> <?= count($shared) ?> collaborator(s)
-      </div>
-
-      <?php if($canEditFile): ?>
-        <form method="POST" action="<?= BASE_URL ?>/documents/metadata?id=<?= (int)$doc['id'] ?>" class="drive-form-stack">
-          <?= csrf_field() ?>
-          <input class="form-control drive-input" name="document_code" value="<?= e((string)($doc['document_code'] ?? '')) ?>" placeholder="Doc. ID" required>
-          <input class="form-control drive-input" name="title" value="<?= e((string)($doc['title'] ?? '')) ?>" placeholder="Title" required>
-          <div class="row g-2">
-            <div class="col-6">
-              <input class="form-control drive-input" value="<?= e($directionLabel) ?>" disabled>
-            </div>
-            <div class="col-6">
-              <select class="form-select drive-input" name="priority_level">
-                <option value="NORMAL" <?= strtoupper((string)($doc['priority_level'] ?? 'NORMAL')) === 'NORMAL' ? 'selected' : '' ?>>Normal</option>
-                <option value="LOW" <?= strtoupper((string)($doc['priority_level'] ?? 'NORMAL')) === 'LOW' ? 'selected' : '' ?>>Low</option>
-                <option value="HIGH" <?= strtoupper((string)($doc['priority_level'] ?? 'NORMAL')) === 'HIGH' ? 'selected' : '' ?>>High</option>
-                <option value="URGENT" <?= strtoupper((string)($doc['priority_level'] ?? 'NORMAL')) === 'URGENT' ? 'selected' : '' ?>>Urgent</option>
-              </select>
-            </div>
+<div class="modal fade workspace-file-details-modal" id="documentShareFileModal" tabindex="-1" aria-labelledby="documentShareFileModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content workspace-file-details-modal__content">
+      <form id="document-share-file-form" method="POST" action="<?= BASE_URL ?>/documents/share" class="drive-form-stack">
+        <?= csrf_field() ?>
+        <div class="modal-header border-0 pb-0">
+          <div>
+            <h5 class="modal-title" id="documentShareFileModalLabel">Route and share file</h5>
+            <p class="workspace-filter-modal__intro mb-0" data-share-field="title">Choose one person in this division to receive the routed file.</p>
           </div>
-          <input class="form-control drive-input" name="signatory" value="<?= e((string)($doc['signatory'] ?? '')) ?>" placeholder="Signatory" required>
-          <input class="form-control drive-input" name="current_location" value="<?= e((string)($doc['current_location'] ?? '')) ?>" placeholder="Current location" required>
-          <div class="row g-2">
-            <div class="col-12">
-              <input class="form-control drive-input" type="date" name="document_date" value="<?= e((string)($doc['document_date'] ?? '')) ?>" required>
-            </div>
-          </div>
-          <input class="form-control drive-input" name="category" value="<?= e((string)($doc['category'] ?? '')) ?>" placeholder="Category" required>
-          <input class="form-control drive-input" name="tags" value="<?= e((string)($doc['tags'] ?? '')) ?>" placeholder="Tags">
-          <button class="btn btn-outline-primary" type="submit">Save tracking details</button>
-        </form>
-      <?php endif; ?>
-
-      <?php if($isPendingSharedRecipient): ?>
-        <div class="details-card__title mt-4">Shared route response</div>
-        <div class="drive-note drive-note--soft mb-3">This document was routed to you and is waiting for your acceptance before the file can be viewed.</div>
-        <form method="POST" action="<?= BASE_URL ?>/documents/share/respond" class="drive-form-stack">
-          <?= csrf_field() ?>
-          <input type="hidden" name="document_id" value="<?= (int)$doc['id'] ?>">
-          <input type="hidden" name="decision" value="ACCEPT">
-          <button class="btn btn-outline-success" type="submit">Accept routed document</button>
-        </form>
-        <form method="POST" action="<?= BASE_URL ?>/documents/share/respond" class="drive-form-stack mt-2">
-          <?= csrf_field() ?>
-          <input type="hidden" name="document_id" value="<?= (int)$doc['id'] ?>">
-          <input type="hidden" name="decision" value="DECLINE">
-          <textarea class="form-control drive-input" name="response_note" rows="3" placeholder="Reason for not accepting yet" required></textarea>
-          <button class="btn btn-outline-danger" type="submit">Do not accept yet</button>
-        </form>
-      <?php elseif($isDeclinedSharedRecipient): ?>
-        <div class="details-card__title mt-4">Shared route response</div>
-        <div class="drive-note drive-note--soft">You previously marked this shared route as not accepted yet. The owner can review the reason in the route history.</div>
-      <?php endif; ?>
-
-      <?php if($isPendingReviewer): ?>
-        <div class="details-card__title mt-4">Review route response</div>
-        <div class="drive-note drive-note--soft mb-3">Accept this routed document first before reviewing its file contents and making an approval decision.</div>
-        <form method="POST" action="<?= BASE_URL ?>/documents/review/accept?id=<?= (int)$doc['id'] ?>" class="drive-form-stack">
-          <?= csrf_field() ?>
-          <button class="btn btn-outline-success" type="submit">Accept for review</button>
-        </form>
-        <form method="POST" action="<?= BASE_URL ?>/documents/review/decline?id=<?= (int)$doc['id'] ?>" class="drive-form-stack mt-2">
-          <?= csrf_field() ?>
-          <textarea class="form-control drive-input" name="response_note" rows="3" placeholder="Reason for not accepting yet" required></textarea>
-          <button class="btn btn-outline-danger" type="submit">Do not accept yet</button>
-        </form>
-      <?php elseif($isDeclinedReviewer): ?>
-        <div class="details-card__title mt-4">Review route response</div>
-        <div class="drive-note drive-note--soft">This review assignment was marked as not accepted yet. The owner can see the reason in the route history.</div>
-      <?php endif; ?>
-
-      <?php if($isOwner && $isOfficial && strcasecmp($statusLabel, 'Approved') === 0): ?>
-        <div class="details-card__title">Review status</div>
-        <div class="drive-note drive-note--soft" style="border-color:rgba(25, 135, 84, 0.28); background:rgba(25, 135, 84, 0.08); color:#146c43;">
-          <span class="badge-soft badge-soft--success" style="display:inline-flex; align-items:center; gap:0.45rem; padding:0.45rem 0.7rem;">
-            <input type="checkbox" checked disabled aria-label="Already approved" style="accent-color:#198754;">
-            <span>Already approved</span>
-          </span>
-          <div class="mt-2">This official record was already approved by the section chief and can no longer be submitted again.</div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
-      <?php endif; ?>
-
-      <?php if($isReviewer && !$isPendingReviewer && (string)($doc['status'] ?? '') === 'To be reviewed' && strtoupper((string)($doc['review_acceptance_status'] ?? 'NOT_SENT')) === 'ACCEPTED'): ?>
-        <div class="details-card__title mt-4">Review decision</div>
-        <form method="POST" action="<?= BASE_URL ?>/documents/review/decision?id=<?= (int)$doc['id'] ?>" class="drive-form-stack js-confirm" data-confirm-message="Approve this official record?">
-          <?= csrf_field() ?>
-          <input type="hidden" name="decision" value="APPROVED">
-          <button class="btn btn-outline-success" type="submit">Approve</button>
-        </form>
-        <form method="POST" action="<?= BASE_URL ?>/documents/review/decision?id=<?= (int)$doc['id'] ?>" class="drive-form-stack js-confirm mt-2" data-confirm-message="Reject this official record?">
-          <?= csrf_field() ?>
-          <input type="hidden" name="decision" value="REJECTED">
-          <textarea class="form-control drive-input" name="reject_note" rows="3" placeholder="Required rejection reason" required></textarea>
-          <button class="btn btn-outline-danger" type="submit">Reject with note</button>
-        </form>
-      <?php endif; ?>
-
-      <div class="details-card__title mt-4">Sharing</div>
-      <?php if(!$isOfficial): ?>
-        <div class="drive-note drive-note--soft">Private files cannot be shared. Move content to official records if it needs collaboration.</div>
-      <?php elseif($isOwner || $role === 'ADMIN'): ?>
-        <form method="POST" action="<?= BASE_URL ?>/documents/share" class="drive-form-stack">
-          <?= csrf_field() ?>
-          <input type="hidden" name="document_id" value="<?= (int)$doc['id'] ?>">
-          <select class="form-select drive-input" name="target_user_id" required>
-            <option value="">Route to employee</option>
-            <?php foreach($shareRecipientGroups as $group): ?>
-              <optgroup label="<?= e($group['division_name']) ?> | Chief: <?= e($group['chief_name']) ?>">
-                <?php foreach($group['items'] as $recipient): ?>
-                  <option value="<?= (int)$recipient['id'] ?>">
-                    <?= e((string)$recipient['name']) ?> | <?= e((string)$recipient['email']) ?>
-                  </option>
+        <div class="modal-body pt-3">
+          <input type="hidden" name="document_id" value="">
+          <div class="drive-note drive-note--soft mb-3">
+            <strong>Current route status:</strong> <span data-share-field="routing">Available with owner</span>
+          </div>
+          <div class="drive-note drive-note--soft mb-3 d-none" data-share-field="locked-note">
+            Routing is active right now, so this file cannot be shared again until it returns to the owner or reaches a final decision.
+          </div>
+          <div data-share-field="form-fields">
+            <div class="share-combobox mb-2" id="document-share-recipient-combobox">
+              <input class="form-control drive-input share-combobox__input" type="search" id="document-share-recipient-search" placeholder="Select user in this division" autocomplete="off">
+              <div class="share-combobox__panel d-none" id="document-share-recipient-panel">
+                <?php foreach($shareRecipientGroups as $group): ?>
+                  <?php foreach($group['items'] as $recipient): ?>
+                    <?php $recipientRole = $roleLabels[strtoupper((string)($recipient['role'] ?? 'EMPLOYEE'))] ?? 'User'; ?>
+                    <?php $recipientLabel = (string)$recipient['name'] . ' | ' . $recipientRole . ' | ' . (string)$recipient['email']; ?>
+                    <button
+                      type="button"
+                      class="share-combobox__option"
+                      data-value="<?= (int)$recipient['id'] ?>"
+                      data-search="<?= e(strtolower(trim((string)($recipient['name'] ?? '') . ' ' . (string)($recipient['email'] ?? '') . ' ' . $recipientRole . ' ' . (string)($recipient['division_name'] ?? '')))) ?>"
+                      data-label="<?= e($recipientLabel) ?>"
+                    ><?= e($recipientLabel) ?></button>
+                  <?php endforeach; ?>
                 <?php endforeach; ?>
-              </optgroup>
-            <?php endforeach; ?>
-          </select>
-          <select class="form-select drive-input" name="permission">
-            <option value="viewer">Viewer</option>
-            <option value="editor">Editor</option>
-          </select>
-          <div class="drive-note drive-note--soft document-route-helper">
-            The employee list is grouped by division and shows the assigned division chief. Selecting an employee will share the file and mark it as routed for that employee's acceptance.
-          </div>
-          <button class="btn btn-outline-primary" type="submit">Route and share to employee</button>
-        </form>
-      <?php endif; ?>
-
-      <?php if(!empty($shared)): ?>
-        <div class="mt-3">
-          <?php foreach($shared as $s): ?>
-            <div class="details-share-row">
-              <div>
-                <div class="fw-semibold"><?= e((string)$s['name']) ?></div>
-                <div class="text-muted small">
-                  <?= e((string)$s['email']) ?> |
-                  <?php if(!empty($s['accepted_at'])): ?>
-                    Accepted
-                  <?php elseif(!empty($s['declined_at'])): ?>
-                    Not accepted yet
-                  <?php else: ?>
-                    Waiting for acceptance
-                  <?php endif; ?>
-                </div>
               </div>
-              <?php if($isOwner || $role === 'ADMIN'): ?>
-                <form method="POST" action="<?= BASE_URL ?>/documents/revoke" class="js-confirm" data-confirm-message="Revoke this access?">
-                  <?= csrf_field() ?>
-                  <input type="hidden" name="document_id" value="<?= (int)$doc['id'] ?>">
-                  <input type="hidden" name="member_user_id" value="<?= (int)$s['user_id'] ?>">
-                  <button class="btn btn-sm btn-outline-danger" type="submit">Revoke</button>
-                </form>
-              <?php endif; ?>
             </div>
-          <?php endforeach; ?>
+            <select class="form-select drive-input mb-2 d-none" name="target_user_id" id="document-share-recipient-select" required>
+              <option value="">Select user in this division</option>
+              <?php foreach($shareRecipientGroups as $group): ?>
+                <optgroup label="<?= e($group['division_name']) ?> | Chief: <?= e($group['chief_name']) ?>">
+                  <?php foreach($group['items'] as $recipient): ?>
+                    <?php $recipientRole = $roleLabels[strtoupper((string)($recipient['role'] ?? 'EMPLOYEE'))] ?? 'User'; ?>
+                    <option
+                      value="<?= (int)$recipient['id'] ?>"
+                      data-search="<?= e(strtolower(trim((string)($recipient['name'] ?? '') . ' ' . (string)($recipient['email'] ?? '') . ' ' . $recipientRole . ' ' . (string)($recipient['division_name'] ?? '')))) ?>"
+                    >
+                      <?= e((string)$recipient['name']) ?> | <?= e($recipientRole) ?> | <?= e((string)$recipient['email']) ?>
+                    </option>
+                  <?php endforeach; ?>
+                </optgroup>
+              <?php endforeach; ?>
+            </select>
+            <select class="form-select drive-input" name="permission">
+              <option value="viewer">Viewer</option>
+              <option value="editor">Editor</option>
+            </select>
+          </div>
         </div>
-      <?php endif; ?>
-      </aside>
+        <div class="modal-footer border-0 pt-0">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+          <button class="btn btn-outline-primary" type="submit" data-share-field="submit">Share</button>
+        </div>
+      </form>
     </div>
   </div>
-
-      <?php if(!empty($reviews)): ?>
-    <section class="details-card mt-4">
-      <div class="details-card__title">Review history</div>
-      <div class="table-responsive">
-        <table class="table workspace-table align-middle mb-0">
-          <thead>
-            <tr>
-              <th>Decision</th>
-              <th>Reviewer</th>
-              <th>Note</th>
-              <th>Date</th>
-            </tr>
-          </thead>
-          <tbody>
-            <?php foreach($reviews as $review): ?>
-              <tr>
-                <td><?= e((string)$review['decision']) ?></td>
-                <td><?= e((string)$review['reviewer_name']) ?></td>
-                <td><?= e((string)($review['note'] ?? '-')) ?></td>
-                <td><?= e((string)$review['created_at']) ?></td>
-              </tr>
-            <?php endforeach; ?>
-          </tbody>
-        </table>
-      </div>
-    </section>
-  <?php endif; ?>
-
-  <?php if(!empty($routes)): ?>
-    <section class="details-card mt-4">
-      <div class="details-card__title">Route history</div>
-      <div class="table-responsive">
-        <table class="table workspace-table align-middle mb-0">
-          <thead>
-            <tr>
-              <th>From</th>
-              <th>To</th>
-              <th>Status</th>
-              <th>Note</th>
-              <th>Updated by</th>
-              <th>Date</th>
-            </tr>
-          </thead>
-          <tbody>
-            <?php foreach($routes as $route): ?>
-              <tr>
-                <td><?= e((string)($route['from_location'] ?: 'Start')) ?></td>
-                <td><?= e((string)$route['to_location']) ?></td>
-                <td><?= e(strtoupper((string)($route['status_snapshot'] ?? 'NOT_ROUTED')) === 'ROUTED' ? 'Routed' : 'Not routed') ?></td>
-                <td><?= e((string)($route['note'] ?? '-')) ?></td>
-                <td><?= e((string)($route['routed_by_name'] ?? 'Unknown')) ?></td>
-                <td><?= e((string)$route['routed_at']) ?></td>
-              </tr>
-            <?php endforeach; ?>
-          </tbody>
-        </table>
-      </div>
-    </section>
-  <?php endif; ?>
 </div>
+
+<script>
+  (function () {
+    const initShareCombobox = function () {
+      const searchInput = document.getElementById('document-share-recipient-search');
+      const recipientSelect = document.getElementById('document-share-recipient-select');
+      const panel = document.getElementById('document-share-recipient-panel');
+      if (!searchInput || !recipientSelect || !panel) {
+        return { reset: function () {} };
+      }
+      const optionButtons = Array.from(panel.querySelectorAll('.share-combobox__option'));
+      let emptyState = panel.querySelector('.share-combobox__empty');
+      if (!emptyState) {
+        emptyState = document.createElement('div');
+        emptyState.className = 'share-combobox__empty d-none';
+        emptyState.textContent = 'No matching user found in this division.';
+        panel.appendChild(emptyState);
+      }
+      const closePanel = function () {
+        panel.classList.add('d-none');
+      };
+      const openPanel = function () {
+        panel.classList.remove('d-none');
+      };
+      panel.addEventListener('mousedown', function (event) {
+        event.preventDefault();
+      });
+      const renderOptions = function () {
+        const query = String(searchInput.value || '').trim().toLowerCase();
+        let visibleCount = 0;
+        optionButtons.forEach(function (button) {
+          const haystack = String(button.getAttribute('data-search') || '').toLowerCase();
+          const matched = query === '' || haystack.indexOf(query) !== -1;
+          button.classList.toggle('d-none', !matched);
+          if (matched) {
+            visibleCount += 1;
+          }
+        });
+        emptyState.classList.toggle('d-none', visibleCount !== 0);
+        openPanel();
+      };
+      optionButtons.forEach(function (button) {
+        button.addEventListener('click', function () {
+          const value = this.getAttribute('data-value') || '';
+          const label = this.getAttribute('data-label') || this.textContent || '';
+          recipientSelect.value = value;
+          searchInput.value = label.trim();
+          closePanel();
+        });
+      });
+      searchInput.addEventListener('focus', renderOptions);
+      searchInput.addEventListener('click', renderOptions);
+      searchInput.addEventListener('input', function () {
+        recipientSelect.value = '';
+        renderOptions();
+      });
+      searchInput.addEventListener('blur', function () {
+        window.setTimeout(closePanel, 180);
+      });
+      return {
+        open: function () {
+          renderOptions();
+        },
+        reset: function () {
+          recipientSelect.value = '';
+          searchInput.value = '';
+          closePanel();
+        },
+      };
+    };
+
+    const modal = document.getElementById('documentShareFileModal');
+    const form = document.getElementById('document-share-file-form');
+    if (!modal || !form) return;
+
+    const titleTarget = modal.querySelector('[data-share-field="title"]');
+    const routingTarget = modal.querySelector('[data-share-field="routing"]');
+    const lockedNote = modal.querySelector('[data-share-field="locked-note"]');
+    const fieldsWrap = modal.querySelector('[data-share-field="form-fields"]');
+    const submitButton = modal.querySelector('[data-share-field="submit"]');
+    const docIdInput = form.querySelector('input[name="document_id"]');
+    const shareCombobox = initShareCombobox();
+    modal.addEventListener('show.bs.modal', function (event) {
+      const trigger = event.relatedTarget;
+      const docId = trigger ? (trigger.getAttribute('data-share-id') || '') : '';
+      const title = trigger ? (trigger.getAttribute('data-share-title') || 'Selected file') : 'Selected file';
+      const routing = trigger ? (trigger.getAttribute('data-share-routing') || 'Available with owner') : 'Available with owner';
+      const locked = trigger ? (trigger.getAttribute('data-share-locked') === '1') : false;
+      if (docIdInput) docIdInput.value = docId;
+      if (titleTarget) titleTarget.textContent = title;
+      if (routingTarget) routingTarget.textContent = routing;
+      if (lockedNote) lockedNote.classList.toggle('d-none', !locked);
+      if (fieldsWrap) fieldsWrap.classList.toggle('d-none', locked);
+      if (submitButton) submitButton.disabled = locked;
+      shareCombobox.reset();
+    });
+    modal.addEventListener('shown.bs.modal', function () {
+      const searchInput = document.getElementById('document-share-recipient-search');
+      if (searchInput && !submitButton.disabled) {
+        searchInput.focus();
+        shareCombobox.open();
+      }
+    });
+  })();
+</script>
 
 <?php require __DIR__ . "/../layouts/footer.php"; ?>

@@ -64,13 +64,13 @@
     <?= csrf_field() ?>
     <input type="hidden" name="form_action" value="password">
     <input class="form-control drive-input" type="password" name="current_password" placeholder="Current password" required>
-    <input class="form-control drive-input" type="password" name="new_password" placeholder="New password" required minlength="6" autocomplete="new-password">
-    <input class="form-control drive-input" type="password" name="new_password_confirm" placeholder="Confirm new password" required minlength="6" autocomplete="new-password">
+    <input class="form-control drive-input" type="password" name="new_password" placeholder="New password" required minlength="8" autocomplete="new-password">
+    <input class="form-control drive-input" type="password" name="new_password_confirm" placeholder="Confirm new password" required minlength="8" autocomplete="new-password">
     <div class="password-health" id="password-health" aria-live="polite">
       <div class="password-health__bar" aria-hidden="true">
         <span class="password-health__fill" id="password-health-fill"></span>
       </div>
-      <div class="password-health__summary" id="password-health-summary">Use at least 6 characters with uppercase, lowercase, and a number.</div>
+      <div class="password-health__summary" id="password-health-summary">Use at least 8 characters with uppercase, lowercase, and a number.</div>
     </div>
     <div class="drive-actions">
       <button class="btn btn-primary" id="account-password-submit">Update password</button>
@@ -98,7 +98,7 @@
       const confirm = confirmInput ? confirmInput.value : '';
 
       const state = {
-        length: next.length >= 6,
+        length: next.length >= 8,
         case: /[a-z]/.test(next) && /[A-Z]/.test(next),
         number: /\d/.test(next),
         match: next !== '' && confirm !== '' && next === confirm && next !== current
@@ -119,7 +119,7 @@
       fill.className = 'password-health__fill ' + tone;
 
       if (next === '' && confirm === '') {
-        summary.textContent = 'Use at least 6 characters with uppercase, lowercase, and a number.';
+        summary.textContent = 'Use at least 8 characters with uppercase, lowercase, and a number.';
       } else if (next !== '' && confirm !== '' && next === current) {
         summary.textContent = 'New password must be different from your current password.';
       } else if (score === 4) {
@@ -127,7 +127,7 @@
       } else if (confirm !== '' && next !== confirm) {
         summary.textContent = 'Passwords do not match yet.';
       } else if (!state.length) {
-        summary.textContent = 'Use at least 6 characters.';
+        summary.textContent = 'Use at least 8 characters.';
       } else if (!state.case) {
         summary.textContent = 'Add both uppercase and lowercase letters.';
       } else if (!state.number) {

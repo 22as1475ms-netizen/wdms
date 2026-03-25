@@ -1,9 +1,8 @@
 <?php
-session_start();
-
 $ROOT = dirname(__DIR__); // C:\xampp\htdocs\wdms
 
 require $ROOT . "/app/config/app.php";
+wdms_bootstrap_session();
 require $ROOT . "/app/config/database.php";
 
 ini_set('display_errors', APP_DEBUG ? '1' : '0');
@@ -15,13 +14,16 @@ require $ROOT . "/app/helpers/redirect.php";
 require $ROOT . "/app/helpers/csrf.php";
 require $ROOT . "/app/helpers/http.php";
 
-$path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-$path = str_replace(BASE_URL, '', $path);
+$path = (string)parse_url((string)($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
+if (BASE_URL !== '' && str_starts_with($path, BASE_URL)) {
+  $path = substr($path, strlen(BASE_URL));
+}
 if ($path === '') $path = '/';
 
 if (str_starts_with($path, '/api/')) {
   require $ROOT . "/app/controllers/ApiController.php";
   api_dispatch($_SERVER['REQUEST_METHOD'], $path);
+  exit;
 }
 
 switch ($path) {
@@ -215,6 +217,12 @@ switch ($path) {
     restore_doc();
     break;
 
+  case '/folders/restore':
+    require $ROOT . "/app/middleware/require_login.php";
+    require $ROOT . "/app/controllers/DocumentController.php";
+    restore_folder();
+    break;
+
   case '/documents/trash/empty':
     require $ROOT . "/app/middleware/require_login.php";
     require $ROOT . "/app/controllers/DocumentController.php";
@@ -274,6 +282,12 @@ switch ($path) {
     require $ROOT . "/app/middleware/require_login.php";
     require $ROOT . "/app/controllers/DocumentController.php";
     rename_folder();
+    break;
+
+  case '/folders/share':
+    require $ROOT . "/app/middleware/require_login.php";
+    require $ROOT . "/app/controllers/DocumentController.php";
+    share_folder();
     break;
 
   // admin

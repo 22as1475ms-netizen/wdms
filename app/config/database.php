@@ -1,12 +1,25 @@
 <?php
+$dbHost = wdms_env_string('DB_HOST', '127.0.0.1');
+$dbPort = wdms_env_int('DB_PORT', 3306, 1);
+$dbName = wdms_env_string('DB_NAME', 'wdms');
+$dbUser = wdms_env_string('DB_USER', 'root');
+$dbPass = wdms_env_string('DB_PASS', '');
+$dbCharset = wdms_env_string('DB_CHARSET', 'utf8mb4');
+
 $pdo = new PDO(
-  "mysql:host=localhost;dbname=wdms;charset=utf8mb4",
-  "root",
-  "",
-  [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
+  "mysql:host={$dbHost};port={$dbPort};dbname={$dbName};charset={$dbCharset}",
+  $dbUser,
+  $dbPass,
+  [
+    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    PDO::ATTR_EMULATE_PREPARES => false,
+  ]
 );
 
-wdms_bootstrap_schema($pdo);
+if (wdms_env_bool('DB_AUTO_BOOTSTRAP_SCHEMA', true)) {
+  wdms_bootstrap_schema($pdo);
+}
 
 function wdms_bootstrap_schema(PDO $pdo): void {
   wdms_add_column_if_missing($pdo, 'folders', 'deleted_at', "TIMESTAMP NULL");
@@ -133,6 +146,14 @@ function wdms_bootstrap_schema(PDO $pdo): void {
   wdms_add_column_if_missing($pdo, 'permissions', 'accepted_at', "TIMESTAMP NULL");
   wdms_add_column_if_missing($pdo, 'permissions', 'declined_at', "TIMESTAMP NULL");
   wdms_add_column_if_missing($pdo, 'permissions', 'response_note', "VARCHAR(1000) NULL");
+
+  wdms_unify_routed_storage($pdo);
+}
+
+function wdms_unify_routed_storage(PDO $pdo): void {
+  // Transitional workflow: keep one routed storage area underneath the app.
+  $pdo->exec("UPDATE folders SET storage_area='OFFICIAL' WHERE storage_area <> 'OFFICIAL'");
+  $pdo->exec("UPDATE documents SET storage_area='OFFICIAL' WHERE storage_area <> 'OFFICIAL'");
 }
 
 function wdms_normalize_legacy_roles(PDO $pdo): void {

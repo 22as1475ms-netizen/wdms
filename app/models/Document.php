@@ -25,9 +25,10 @@ class Document {
     $pdo->prepare("
       INSERT INTO documents(
         name, owner_id, folder_id, storage_area, division_id, document_code, title,
-        document_type, signatory, current_location, routing_status, priority_level, document_date
+        document_type, signatory, current_location, routing_status, priority_level, document_date,
+        tags, category, status, retention_until
       )
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ")->execute([
       $name,
       $ownerId,
@@ -42,6 +43,10 @@ class Document {
       self::normalizeRoutingStatus((string)($metadata['routing_status'] ?? 'NOT_ROUTED')),
       self::normalizePriorityLevel((string)($metadata['priority_level'] ?? 'NORMAL')),
       self::cleanDate($metadata['document_date'] ?? null),
+      $metadata['tags'] ?? null,
+      $metadata['category'] ?? null,
+      $metadata['status'] ?? 'Draft',
+      $metadata['retention_until'] ?? null,
     ]);
     return (int)$pdo->lastInsertId();
   }
@@ -221,8 +226,6 @@ class Document {
     if ($folderId !== null && $folderId > 0) {
       $folderSql = " AND d.folder_id = ? ";
       $params[] = $folderId;
-    } elseif (!$trash) {
-      $folderSql = " AND d.folder_id IS NULL ";
     }
 
     $metaSql = self::buildFilterSql($filters, $params);
@@ -234,6 +237,7 @@ class Document {
       SELECT d.*, u.name owner_name,
              (SELECT MAX(version_number) FROM document_versions dv WHERE dv.document_id=d.id) latest_version,
              (SELECT dv.file_path FROM document_versions dv WHERE dv.document_id=d.id ORDER BY dv.version_number DESC, dv.id DESC LIMIT 1) latest_file_path,
+             (SELECT ru.name FROM document_routes dr JOIN users ru ON ru.id=dr.routed_by WHERE dr.document_id=d.id ORDER BY dr.routed_at DESC, dr.id DESC LIMIT 1) last_touched_by_name,
              $activityExpr AS last_activity_at
       FROM documents d
       JOIN users u ON u.id=d.owner_id
@@ -263,6 +267,7 @@ class Document {
       SELECT d.*, u.name owner_name, f.name AS folder_name,
              (SELECT MAX(version_number) FROM document_versions dv WHERE dv.document_id=d.id) latest_version,
              (SELECT dv.file_path FROM document_versions dv WHERE dv.document_id=d.id ORDER BY dv.version_number DESC, dv.id DESC LIMIT 1) latest_file_path,
+             (SELECT ru.name FROM document_routes dr JOIN users ru ON ru.id=dr.routed_by WHERE dr.document_id=d.id ORDER BY dr.routed_at DESC, dr.id DESC LIMIT 1) last_touched_by_name,
              $activityExpr AS last_activity_at
       FROM documents d
       JOIN users u ON u.id=d.owner_id
@@ -276,42 +281,85 @@ class Document {
 
   public static function listShared(PDO $pdo, int $userId, string $search, int $page, int $per, array $filters = []): array {
     $off = ($page-1)*$per;
-    $params = [$userId];
-    $searchSql = self::buildSearchSql($search, $params);
-    $metaSql = self::buildFilterSql($filters, $params);
+    $listParams = [$userId, $userId, $userId, $userId];
+    $searchSql = self::buildSearchSql($search, $listParams);
+    $metaSql = self::buildFilterSql($filters, $listParams);
     $orderBy = self::sortOrderSql($filters, 'd.id DESC');
     $activityExpr = "COALESCE((SELECT MAX(dv.created_at) FROM document_versions dv WHERE dv.document_id=d.id), d.reviewed_at, d.submitted_at, d.created_at)";
 
     $s = $pdo->prepare("
-      SELECT d.*, u.name owner_name, p.*,
+      SELECT d.*, u.name owner_name,
+             p.id AS permission_id,
+             p.user_id AS permission_user_id,
+             p.permission,
+             p.shared_by,
+             p.accepted_at,
+             p.declined_at,
+             p.response_note,
+             CASE
+               WHEN d.owner_id = ? THEN 'outgoing'
+               ELSE 'incoming'
+             END AS shared_scope,
              (SELECT MAX(version_number) FROM document_versions dv WHERE dv.document_id=d.id) latest_version,
              (SELECT dv.file_path FROM document_versions dv WHERE dv.document_id=d.id ORDER BY dv.version_number DESC, dv.id DESC LIMIT 1) latest_file_path,
+             (SELECT ru.name FROM document_routes dr JOIN users ru ON ru.id=dr.routed_by WHERE dr.document_id=d.id ORDER BY dr.routed_at DESC, dr.id DESC LIMIT 1) last_touched_by_name,
+             (SELECT dr.from_location FROM document_routes dr WHERE dr.document_id=d.id ORDER BY dr.routed_at DESC, dr.id DESC LIMIT 1) last_route_from,
+             (SELECT dr.to_location FROM document_routes dr WHERE dr.document_id=d.id ORDER BY dr.routed_at DESC, dr.id DESC LIMIT 1) last_route_to,
+             (SELECT dr.note FROM document_routes dr WHERE dr.document_id=d.id ORDER BY dr.routed_at DESC, dr.id DESC LIMIT 1) last_route_note,
+             (SELECT dr.routed_at FROM document_routes dr WHERE dr.document_id=d.id ORDER BY dr.routed_at DESC, dr.id DESC LIMIT 1) last_route_at,
+             (SELECT ru.name FROM document_routes dr JOIN users ru ON ru.id=dr.routed_by WHERE dr.document_id=d.id ORDER BY dr.routed_at DESC, dr.id DESC LIMIT 1) last_route_by_name,
              $activityExpr AS last_activity_at
-      FROM permissions p
-      JOIN documents d ON d.id=p.document_id
+      FROM documents d
       JOIN users u ON u.id=d.owner_id
-      WHERE p.user_id=? AND d.deleted_at IS NULL $searchSql $metaSql
+      LEFT JOIN permissions p ON p.document_id=d.id AND p.user_id=?
+      WHERE d.deleted_at IS NULL
+        AND (
+          p.user_id=?
+          OR (
+            d.owner_id=?
+            AND EXISTS (SELECT 1 FROM permissions px WHERE px.document_id=d.id)
+          )
+        )
+        $searchSql $metaSql
       ORDER BY $orderBy
       LIMIT $per OFFSET $off
     ");
-    $s->execute($params);
+    $s->execute($listParams);
     $rows = $s->fetchAll();
 
+    $countParams = [$userId, $userId, $userId];
+    $countSearchSql = self::buildSearchSql($search, $countParams);
+    $countMetaSql = self::buildFilterSql($filters, $countParams);
     $sc = $pdo->prepare("
       SELECT COUNT(*)
-      FROM permissions p
-      JOIN documents d ON d.id=p.document_id
-      WHERE p.user_id=? AND d.deleted_at IS NULL $searchSql $metaSql
+      FROM documents d
+      LEFT JOIN permissions p ON p.document_id=d.id AND p.user_id=?
+      WHERE d.deleted_at IS NULL
+        AND (
+          p.user_id=?
+          OR (
+            d.owner_id=?
+            AND EXISTS (SELECT 1 FROM permissions px WHERE px.document_id=d.id)
+          )
+        )
+        $countSearchSql $countMetaSql
     ");
-    $sc->execute($params);
+    $sc->execute($countParams);
     $total = (int)$sc->fetchColumn();
 
     return [$rows, $total];
   }
 
-  public static function listForDivisionChief(PDO $pdo, int $divisionId, array $filters = []): array {
-    $params = [$divisionId];
-    $where = "d.division_id=? AND d.storage_area='OFFICIAL' AND d.deleted_at IS NULL";
+  public static function listForDivisionChief(PDO $pdo, int $divisionId, int $reviewerUserId, array $filters = []): array {
+    $params = [$divisionId, $reviewerUserId, $reviewerUserId];
+    $where = "
+      d.division_id=? AND d.storage_area='OFFICIAL' AND d.deleted_at IS NULL
+      AND (
+        d.review_acceptance_status IN ('PENDING', 'ACCEPTED')
+        OR d.reviewed_by=?
+        OR (d.status IN ('Approved', 'Rejected') AND d.reviewed_by=?)
+      )
+    ";
     $status = trim((string)($filters['status'] ?? ''));
     if ($status !== '') {
       $where .= " AND d.status = ? ";
@@ -329,6 +377,7 @@ class Document {
       SELECT d.*, u.name owner_name, u.email owner_email,
              (SELECT MAX(version_number) FROM document_versions dv WHERE dv.document_id=d.id) latest_version,
              (SELECT dv.file_path FROM document_versions dv WHERE dv.document_id=d.id ORDER BY dv.version_number DESC, dv.id DESC LIMIT 1) latest_file_path,
+             (SELECT ru.name FROM document_routes dr JOIN users ru ON ru.id=dr.routed_by WHERE dr.document_id=d.id ORDER BY dr.routed_at DESC, dr.id DESC LIMIT 1) last_touched_by_name,
              COALESCE((SELECT MAX(dv.created_at) FROM document_versions dv WHERE dv.document_id=d.id), d.reviewed_at, d.submitted_at, d.created_at) AS last_activity_at
       FROM documents d
       JOIN users u ON u.id = d.owner_id
@@ -417,6 +466,29 @@ class Document {
     $pdo->prepare("UPDATE documents SET deleted_at=NULL, deleted_by=NULL, deleted_reason=NULL WHERE id=?")->execute([$id]);
   }
 
+  public static function restoreByFolderIds(PDO $pdo, array $folderIds, ?int $ownerId = null): int {
+    $ids = array_values(array_unique(array_map('intval', $folderIds)));
+    if (empty($ids)) {
+      return 0;
+    }
+
+    $ph = implode(',', array_fill(0, count($ids), '?'));
+    $params = $ids;
+    $ownerSql = '';
+    if ($ownerId !== null) {
+      $ownerSql = ' AND owner_id=?';
+      $params[] = $ownerId;
+    }
+
+    $s = $pdo->prepare("
+      UPDATE documents
+      SET deleted_at=NULL, deleted_by=NULL, deleted_reason=NULL
+      WHERE folder_id IN ($ph) AND deleted_at IS NOT NULL $ownerSql
+    ");
+    $s->execute($params);
+    return $s->rowCount();
+  }
+
   public static function checkout(PDO $pdo, int $id, int $userId): void {
     $pdo->prepare("UPDATE documents SET checked_out_by=?, checked_out_at=NOW() WHERE id=?")
       ->execute([$userId, $id]);
@@ -502,6 +574,7 @@ class Document {
         COALESCE((SELECT MAX(dv.version_number) FROM document_versions dv WHERE dv.document_id = d.id), 0) AS latest_version,
         COALESCE((SELECT COUNT(*) FROM document_versions dv WHERE dv.document_id = d.id), 0) AS version_count,
         COALESCE((SELECT COUNT(*) FROM permissions p WHERE p.document_id = d.id), 0) AS shared_count,
+        (SELECT ru.name FROM document_routes dr JOIN users ru ON ru.id = dr.routed_by WHERE dr.document_id = d.id ORDER BY dr.routed_at DESC, dr.id DESC LIMIT 1) AS last_touched_by_name,
         COALESCE((SELECT MAX(dv.created_at) FROM document_versions dv WHERE dv.document_id = d.id), d.reviewed_at, d.submitted_at, d.created_at) AS last_activity_at
       FROM documents d
       LEFT JOIN folders f ON f.id = d.folder_id
@@ -571,6 +644,7 @@ class Document {
     $documentCode = trim((string)($filters['document_code'] ?? ''));
     $documentType = trim((string)($filters['document_type'] ?? ''));
     $routingStatus = trim((string)($filters['routing_status'] ?? ''));
+    $routeState = strtoupper(trim((string)($filters['route_state'] ?? '')));
     $priorityLevel = trim((string)($filters['priority_level'] ?? ''));
     $currentLocation = trim((string)($filters['current_location'] ?? ''));
 
@@ -609,6 +683,13 @@ class Document {
     if ($routingStatus !== '') {
       $metaSql .= " AND d.routing_status = ? ";
       $params[] = self::normalizeRoutingStatus($routingStatus);
+    }
+    if ($routeState === 'ROUTED') {
+      $metaSql .= " AND d.routing_status <> ? ";
+      $params[] = 'AVAILABLE';
+    } elseif ($routeState === 'NOT_ROUTED') {
+      $metaSql .= " AND d.routing_status = ? ";
+      $params[] = 'AVAILABLE';
     }
     if ($priorityLevel !== '') {
       $metaSql .= " AND d.priority_level = ? ";

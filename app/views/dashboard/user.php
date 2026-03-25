@@ -57,11 +57,11 @@ $recentNotifications = is_array($recentNotifications ?? null) ? $recentNotificat
 
   <section class="row g-3">
     <div class="col-12 col-lg-4">
-      <a href="<?= BASE_URL ?>/documents?tab=my" class="card h-100 text-decoration-none text-dark border-0 shadow-sm">
+      <a href="<?= BASE_URL ?>/documents?tab=routed" class="card h-100 text-decoration-none text-dark border-0 shadow-sm">
         <div class="card-body">
           <div class="text-uppercase fw-bold small text-muted">Step 1</div>
-          <h2 class="h5 mt-2 mb-2">My Files</h2>
-          <p class="text-muted mb-0">Open your files, upload a new file, or create a folder.</p>
+          <h2 class="h5 mt-2 mb-2">Routed Files</h2>
+          <p class="text-muted mb-0">Open routed files, upload a new file, or track where each record is now.</p>
         </div>
       </a>
     </div>
@@ -106,7 +106,7 @@ $recentNotifications = is_array($recentNotifications ?? null) ? $recentNotificat
           <?= e(format_user_dashboard_bytes($storageRemaining)) ?> remaining of <?= e(format_user_dashboard_bytes($storageLimit)) ?>
         </div>
       </div>
-      <a class="btn btn-outline-secondary mt-3" href="<?= BASE_URL ?>/documents?tab=my"><i class="bi bi-upload me-1"></i>Open My Files</a>
+      <a class="btn btn-outline-secondary mt-3" href="<?= BASE_URL ?>/documents?tab=routed"><i class="bi bi-upload me-1"></i>Open Routed Files</a>
     </article>
   </section>
 
@@ -116,7 +116,7 @@ $recentNotifications = is_array($recentNotifications ?? null) ? $recentNotificat
         <h2 class="surface-card__title mb-1">Recent files</h2>
         <p class="surface-card__copy mb-0">Open one of your recent files quickly.</p>
       </div>
-      <a class="btn btn-light" href="<?= BASE_URL ?>/documents?tab=my">See all files</a>
+      <a class="btn btn-light" href="<?= BASE_URL ?>/documents?tab=routed">See all files</a>
     </div>
 
     <?php if(empty($recentDocs)): ?>

@@ -32,7 +32,7 @@ function account_avatar_upload(array $file, int $uid): ?string {
     return null;
   }
 
-  $dir = __DIR__ . '/../../public/uploads/avatars';
+  $dir = wdms_public_upload_dir('avatars');
   if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
     return null;
   }
@@ -47,8 +47,8 @@ function account_avatar_upload(array $file, int $uid): ?string {
 }
 
 function account_password_strength_error(string $current, string $next, string $confirm): ?string {
-  if (strlen($next) < 6) {
-    return 'New password must be at least 6 characters.';
+  if (strlen($next) < 8) {
+    return 'New password must be at least 8 characters.';
   }
   if (!preg_match('/[a-z]/', $next) || !preg_match('/[A-Z]/', $next)) {
     return 'New password must include both uppercase and lowercase letters.';
@@ -101,7 +101,7 @@ function account_password(): void {
         if ($uploadedPath !== null || $usePreset) {
           $oldPhoto = trim((string)($u['avatar_photo'] ?? ''));
           if ($oldPhoto !== '' && str_starts_with($oldPhoto, '/uploads/avatars/')) {
-            $oldAbs = __DIR__ . '/../../public' . $oldPhoto;
+            $oldAbs = wdms_public_path(ltrim($oldPhoto, '/'));
             if (is_file($oldAbs)) {
               @unlink($oldAbs);
             }

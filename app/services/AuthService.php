@@ -9,7 +9,11 @@ class AuthService {
     if (($u['status'] ?? 'ACTIVE') !== 'ACTIVE') return false;
 
     if (password_verify($password, $u['password'])) {
+      if (session_status() === PHP_SESSION_ACTIVE) {
+        session_regenerate_id(true);
+      }
       $_SESSION['user'] = $u;
+      $_SESSION['_last_activity'] = time();
       AuditLog::add($pdo, (int)$u['id'], "Logged in", null, null);
       return true;
     }

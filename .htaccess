@@ -1,0 +1,13 @@
+Options -Indexes
+DirectoryIndex index.php
+
+RewriteEngine On
+
+# Expose static files from /public without requiring /public in the URL.
+RewriteRule ^(assets/.*)$ public/$1 [L]
+RewriteRule ^(uploads/.*)$ public/$1 [L]
+
+# Route application requests through the root front controller.
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]

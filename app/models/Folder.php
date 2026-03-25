@@ -100,6 +100,18 @@ class Folder {
     return $s->rowCount();
   }
 
+  public static function restoreTreeForUser(PDO $pdo, int $userId, string $path, string $storageArea = 'PRIVATE'): int {
+    $normalized = self::normalizePath($path);
+    $like = $normalized . self::PATH_SEPARATOR . '%';
+    $s = $pdo->prepare("
+      UPDATE folders
+      SET deleted_at=NULL, deleted_by=NULL
+      WHERE owner_id=? AND storage_area=? AND deleted_at IS NOT NULL AND (name=? OR name LIKE ?)
+    ");
+    $s->execute([$userId, self::normalizeStorageArea($storageArea), $normalized, $like]);
+    return $s->rowCount();
+  }
+
   public static function trashedRootFolders(array $folders): array {
     $pathMap = [];
     foreach ($folders as $folder) {

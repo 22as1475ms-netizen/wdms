@@ -1,6 +1,9 @@
 <?php
 $chatUser = $_SESSION['user'] ?? null;
 $chatEnabled = !empty($chatUser) && strtoupper((string)($chatUser['role'] ?? '')) !== 'ADMIN';
+$chatInitials = $chatUser ? avatar_initials((string)($chatUser['name'] ?? '')) : '';
+$chatAvatarPhoto = $chatUser ? avatar_photo_url($chatUser) : null;
+$chatAvatarPreset = $chatUser ? avatar_preset_key($chatUser) : 'preset-ocean';
 $walkthroughRole = strtoupper((string)($chatUser['role'] ?? ''));
 $walkthroughVersion = match ($walkthroughRole) {
   'ADMIN' => 'admin-v1',
@@ -12,28 +15,31 @@ $walkthroughAutoOpen = !empty($chatUser) && $walkthroughSeenVersion !== $walkthr
 $walkthroughGuide = match ($walkthroughRole) {
   'ADMIN' => [
     ['title' => 'Manage the workspace structure', 'body' => 'Create accounts, assign roles, and map employees or section chiefs to the right division from Manage Users.', 'tip' => 'Admins oversee the system. They do not work inside document approval like normal staff.'],
-    ['title' => 'Inspect user workspaces', 'body' => 'Open a selected user workspace and switch between Private, Official, and Trash to inspect their records without mixing accounts together.', 'tip' => 'Use the top search to jump to pages, folders, files, settings, and users faster.'],
+    ['title' => 'Inspect user workspaces', 'body' => 'Open a selected user workspace and switch between Routed Files and Trash to inspect their records without mixing accounts together.', 'tip' => 'Use the top search to jump to pages, folders, files, settings, and users faster.'],
     ['title' => 'Handle access changes carefully', 'body' => 'Use password reset, role updates, disable account, and delete account only when needed because they directly affect user access and owned content.', 'tip' => 'Disable keeps the account intact. Delete removes the account and its owned files.'],
   ],
   'DIVISION_CHIEF' => [
-    ['title' => 'Use your own workspace first', 'body' => 'Your Private and Official tabs work like an employee workspace. Organize in Private, move ready records to Official, then submit when needed.', 'tip' => 'Private stays outside review. Official keeps the approval flow.'],
-    ['title' => 'Review through Division Queue', 'body' => 'Open Division Queue to see each employee in your division as a folder. Open an employee folder to review their official submissions.', 'tip' => 'Division Queue is for viewing and reviewing employee records, not for adding or deleting their files.'],
-    ['title' => 'Approve or reject clearly', 'body' => 'Preview a submitted record, then approve or reject it with a note so the employee knows what to keep or fix.', 'tip' => 'Use the status filters in Official to check Draft, Approved, and Rejected records quickly.'],
+    ['title' => 'Use your own workspace first', 'body' => 'Your Routed Files workspace is where uploads, folders, and document routing all happen. Keep tracking fields current so the next handler can follow the file easily.', 'tip' => 'The routed workspace keeps current location, last touch, and review state together.'],
+    ['title' => 'Review through Division Queue', 'body' => 'Open Division Queue to see each employee in your division as a folder. Open an employee folder to review their routed submissions.', 'tip' => 'Division Queue is for viewing and reviewing employee records, not for adding or deleting their files.'],
+    ['title' => 'Approve or reject clearly', 'body' => 'Preview a submitted routed file, then approve or reject it with a note so the employee knows what to keep or fix.', 'tip' => 'Use the status filters in Routed Files to check Draft, Approved, and Rejected records quickly.'],
   ],
   default => [
-    ['title' => 'Start in Private', 'body' => 'Upload files or folders into Private while you work. Use folders when you want to preserve subfolders and grouped content.', 'tip' => 'Private is your working area. It does not go through approval.'],
-    ['title' => 'Move ready items to Official', 'body' => 'Use the three-dot menu or multi-select actions to move files or folders from Private to Official when they are ready to become formal records.', 'tip' => 'Once in Official, each record starts as Draft until you submit it for review.'],
-    ['title' => 'Submit and track review', 'body' => 'From Official, submit a file or folder to your section chief. Use the Draft, Approved, and Rejected filters to track status.', 'tip' => 'Trash holds deleted items. Permanent delete cannot be undone.'],
+    ['title' => 'Start in Routed Files', 'body' => 'Upload files into Routed Files and keep the tracking fields complete from the beginning so every handoff is visible.', 'tip' => 'Current location and route status help everyone see where the file is now.'],
+    ['title' => 'Route and share clearly', 'body' => 'Use routing updates and sharing to send a file to the next person or destination without moving it between separate storage areas.', 'tip' => 'Each route entry records who handled the file and where it went next.'],
+    ['title' => 'Submit and track review', 'body' => 'Submit a routed file to your section chief when it is ready for review. Use the Draft, Approved, and Rejected filters to track status.', 'tip' => 'Trash holds deleted items. Permanent delete cannot be undone.'],
   ],
 };
 ?>
 </div>
 <?php if($chatEnabled): ?>
-<button type="button" class="global-chat-launcher btn btn-primary" id="global-chat-launcher">
-  <i class="bi bi-chat-dots me-1"></i>Chats
-  <span id="global-chat-unread-dot" class="chat-unread-dot d-none" aria-hidden="true"></span>
-  <span id="global-chat-unread" class="visually-hidden">0</span>
-</button>
+<div class="global-chat-launcher-stack">
+  <button type="button" class="global-chat-launcher global-chat-launcher--compose" id="global-chat-launcher" aria-label="Create message" title="Create message">
+    <i class="bi bi-pencil-square"></i>
+    <span id="global-chat-unread-dot" class="chat-unread-dot d-none" aria-hidden="true"></span>
+    <span id="global-chat-unread" class="visually-hidden">0</span>
+  </button>
+</div>
+<div class="global-chat-incoming-preview d-none" id="global-chat-incoming-preview" aria-label="Recent chats"></div>
 <section class="global-chat-hub d-none" id="global-chat-hub">
   <div class="global-chat-hub__head">
     <strong>Messages</strong>
@@ -150,45 +156,6 @@ $walkthroughGuide = match ($walkthroughRole) {
     </div>
   </div>
 </div>
-<div class="modal fade" id="wdmsWalkthroughModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered modal-lg">
-    <div class="modal-content wdms-walkthrough-modal">
-      <div class="modal-header border-0 pb-0">
-        <div>
-          <div class="wdms-walkthrough-modal__eyebrow">Role guide</div>
-          <h5 class="modal-title mb-1">How to use WDMS</h5>
-          <p class="wdms-walkthrough-modal__intro mb-0"><?= e(role_label((string)($chatUser['role'] ?? 'EMPLOYEE'))) ?> workflow walkthrough</p>
-        </div>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-      </div>
-      <div class="modal-body">
-        <div class="wdms-walkthrough-progress">
-          <span id="wdmsWalkthroughStepCount">Step 1 of <?= count($walkthroughGuide) ?></span>
-          <div class="wdms-walkthrough-progress__bar"><span id="wdmsWalkthroughProgressBar"></span></div>
-        </div>
-        <article class="wdms-walkthrough-card">
-          <h3 id="wdmsWalkthroughTitle"></h3>
-          <p id="wdmsWalkthroughBody"></p>
-          <div class="wdms-walkthrough-tip">
-            <i class="bi bi-lightbulb"></i>
-            <span id="wdmsWalkthroughTip"></span>
-          </div>
-        </article>
-      </div>
-      <div class="modal-footer border-0">
-        <button type="button" class="btn btn-light" id="wdmsWalkthroughSkip">Skip for now</button>
-        <div class="wdms-walkthrough-actions">
-          <button type="button" class="btn btn-outline-secondary" id="wdmsWalkthroughPrev">Back</button>
-          <button type="button" class="btn btn-primary" id="wdmsWalkthroughNext">Next</button>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-<form id="wdmsWalkthroughStateForm" class="d-none" method="POST" action="<?= BASE_URL ?>/account/onboarding/complete">
-  <?= csrf_field() ?>
-  <input type="hidden" name="version" value="<?= e($walkthroughVersion) ?>">
-</form>
 <?php endif; ?>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script>
@@ -237,10 +204,6 @@ $walkthroughGuide = match ($walkthroughRole) {
     const toggleColorModeBtn = document.getElementById('toggle-color-mode');
     const toggleColorModeIcon = document.getElementById('toggle-color-mode-icon');
     const toggleColorModeLabel = document.getElementById('toggle-color-mode-label');
-    const togglePerformanceModeBtn = document.getElementById('toggle-performance-mode');
-    const togglePerformanceIcon = document.getElementById('toggle-performance-icon');
-    const togglePerformanceLabel = document.getElementById('toggle-performance-label');
-    const togglePerformanceValue = document.getElementById('toggle-performance-value');
     const resetChatSettingsBtn = document.getElementById('wdmsChatSettingsReset');
     const chatThemeOptions = Array.from(document.querySelectorAll('[data-chat-theme-option]'));
     let resolver = null;
@@ -269,11 +232,6 @@ $walkthroughGuide = match ($walkthroughRole) {
       return (prefersReducedMotion || saveData || deviceMemory <= 4 || hardwareConcurrency <= 4) ? 'lite' : 'full';
     };
 
-    const getStoredPerformanceMode = function () {
-      const value = document.documentElement.getAttribute('data-performance-mode') || 'auto';
-      return ['auto', 'lite', 'full'].includes(value) ? value : 'auto';
-    };
-
     const setColorMode = function (mode) {
       const resolved = mode === 'dark' ? 'dark' : 'light';
       document.documentElement.setAttribute('data-color-mode', resolved);
@@ -298,39 +256,8 @@ $walkthroughGuide = match ($walkthroughRole) {
       });
     };
 
-    const setPerformanceMode = function (mode) {
-      const resolvedMode = ['auto', 'lite', 'full'].includes(mode) ? mode : 'auto';
-      const resolvedTier = resolvedMode === 'auto' ? detectPerformanceTier() : resolvedMode;
-      document.documentElement.setAttribute('data-performance-mode', resolvedMode);
-      document.documentElement.setAttribute('data-performance-tier', resolvedTier);
-      window.wdmsPerformance = Object.assign({}, window.wdmsPerformance || {}, {
-        mode: resolvedMode,
-        tier: resolvedTier
-      });
-      try { localStorage.setItem('wdms-performance-mode', resolvedMode); } catch (_err) {}
-
-      const labelMap = {
-        auto: resolvedTier === 'lite' ? 'Auto (Lite)' : 'Auto (Full)',
-        lite: 'Lite',
-        full: 'Full'
-      };
-
-      if (togglePerformanceIcon) {
-        togglePerformanceIcon.className = 'bi ' + (resolvedTier === 'lite' ? 'bi-battery-half' : 'bi-speedometer2');
-      }
-      if (togglePerformanceLabel) {
-        togglePerformanceLabel.textContent = resolvedMode === 'auto'
-          ? 'Uses your device capability'
-          : (resolvedMode === 'lite' ? 'Lighter visuals and motion' : 'Richer visuals and previews');
-      }
-      if (togglePerformanceValue) {
-        togglePerformanceValue.textContent = labelMap[resolvedMode];
-      }
-    };
-
     setColorMode(getStoredColorMode());
     setChatTheme(getStoredChatTheme());
-    setPerformanceMode(getStoredPerformanceMode());
 
     chatThemeOptions.forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -347,14 +274,6 @@ $walkthroughGuide = match ($walkthroughRole) {
     if (toggleColorModeBtn) {
       toggleColorModeBtn.addEventListener('click', function () {
         setColorMode(getStoredColorMode() === 'dark' ? 'light' : 'dark');
-      });
-    }
-
-    if (togglePerformanceModeBtn) {
-      togglePerformanceModeBtn.addEventListener('click', function () {
-        const current = getStoredPerformanceMode();
-        const next = current === 'auto' ? 'lite' : (current === 'lite' ? 'full' : 'auto');
-        setPerformanceMode(next);
       });
     }
 
@@ -646,6 +565,7 @@ $walkthroughGuide = match ($walkthroughRole) {
     const chatUnread = document.getElementById('global-chat-unread');
     const chatUnreadDot = document.getElementById('global-chat-unread-dot');
     const chatDock = document.getElementById('global-chat-dock');
+    const chatIncomingPreview = document.getElementById('global-chat-incoming-preview');
     const chatNewEmail = document.getElementById('global-chat-new-email');
     const chatNewMessage = document.getElementById('global-chat-new-message');
       const chatNewImage = document.getElementById('global-chat-new-image');
@@ -698,17 +618,68 @@ $walkthroughGuide = match ($walkthroughRole) {
         }
         return '<span class="chat-peer-avatar ' + preset + cls + '">' + initials + '</span>';
       };
+      const launcherAvatarHtml = function (peer, fallbackClass) {
+        const resolved = peer || {};
+        const preset = presetClass(resolved.peer_avatar_preset);
+        const photo = String(resolved.peer_avatar_photo || '').trim();
+        const src = photo ? (photo.startsWith('/') ? (baseUrl + photo) : photo) : '';
+        const label = escapeHtml(resolved.peer_name || resolved.peer_email || 'User');
+        const initials = escapeHtml(initialsOf(resolved.peer_name, resolved.peer_email));
+        if (src) {
+          return '<img src="' + escapeHtml(src) + '" alt="' + label + '">';
+        }
+        return '<span class="chat-peer-avatar ' + preset + ' ' + fallbackClass + '">' + initials + '</span>';
+      };
+      const hideIncomingPreview = function () {
+        if (!chatIncomingPreview) return;
+        chatIncomingPreview.classList.add('d-none');
+        chatIncomingPreview.innerHTML = '';
+      };
+      const showIncomingPreview = function (items) {
+        if (!chatIncomingPreview) {
+          return;
+        }
+        const peers = Array.isArray(items)
+          ? items.filter(function (peer) {
+              const key = String(peer && peer.peer_id ? peer.peer_id : '');
+              return key !== '' && !minimizedWindows[key] && !openWindows[key];
+            }).slice(0, 3)
+          : [];
+        if (!peers.length) {
+          hideIncomingPreview();
+          return;
+        }
+        chatIncomingPreview.innerHTML = peers.map(function (peer) {
+          return '<button type="button" class="global-chat-incoming-preview__person" data-peer-id="' + escapeHtml(peer.peer_id) + '" aria-label="Open chat with ' + escapeHtml(peer.peer_name || peer.peer_email || 'user') + '">'
+            + '<span class="global-chat-incoming-preview__avatar">' + launcherAvatarHtml(peer, 'global-chat-incoming-preview__avatar-fallback') + '</span>'
+            + '</button>';
+        }).join('');
+        chatIncomingPreview.querySelectorAll('.global-chat-incoming-preview__person').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            const key = this.getAttribute('data-peer-id') || '';
+            const peer = peerCache[key];
+            if (peer && peer.peer_id) {
+              openChatWindow(peer);
+              chatHub.classList.add('d-none');
+            }
+          });
+        });
+        chatIncomingPreview.classList.remove('d-none');
+      };
 
       const getWindow = function (peerId) {
         return openWindows[String(peerId)] || null;
       };
-      const minimizeWindow = function (win) {
+      const minimizeWindow = function (win, onHidden) {
         if (!win || win.classList.contains('d-none')) return;
         win.classList.add('is-minimizing');
         window.setTimeout(function () {
           if (!win) return;
           win.classList.add('d-none');
           win.classList.remove('is-minimizing');
+          if (typeof onHidden === 'function') {
+            onHidden();
+          }
         }, CHAT_ANIM_MS);
       };
       const restoreWindow = function (win) {
@@ -914,9 +885,10 @@ $walkthroughGuide = match ($walkthroughRole) {
           pollConversations();
         });
         win.querySelector('[data-action="minimize"]').addEventListener('click', function () {
-          minimizeWindow(win);
-          minimizedWindows[key] = peer;
-          renderDock();
+          minimizeWindow(win, function () {
+            minimizedWindows[key] = peer;
+            renderDock();
+          });
         });
         windowForm.addEventListener('submit', async function (e) {
           e.preventDefault();
@@ -955,6 +927,7 @@ $walkthroughGuide = match ($walkthroughRole) {
 
         chatDock.appendChild(win);
         openWindows[key] = win;
+        hideIncomingPreview();
         loadThread(peer.peer_id);
       };
 
@@ -962,8 +935,7 @@ $walkthroughGuide = match ($walkthroughRole) {
         const chips = Object.keys(minimizedWindows).map(function (key) {
           const peer = minimizedWindows[key];
           return '<button type="button" class="btn btn-sm btn-light global-chat-chip" data-peer-id="' + escapeHtml(key) + '">'
-            + avatarHtml(peer, 'chat-peer-avatar--mini')
-            + escapeHtml(peer.peer_name || peer.peer_email || ('User #' + key))
+            + avatarHtml(peer, 'global-chat-chip__avatar')
             + '</button>';
         }).join('');
         const currentWindows = Array.from(chatDock.querySelectorAll('.global-chat-window')).map(function (el) { return el; });
@@ -985,8 +957,16 @@ $walkthroughGuide = match ($walkthroughRole) {
 
       const renderConversations = function (items) {
         if (!items.length) {
+          hideIncomingPreview();
           chatConversations.innerHTML = '<div class="text-muted small">No conversations yet.</div>';
           return;
+        }
+        if (chatHub.classList.contains('d-none')) {
+          showIncomingPreview(items.filter(function (item) {
+            return Number(item.unread_count || 0) > 0;
+          }));
+        } else {
+          hideIncomingPreview();
         }
         chatConversations.innerHTML = items.map(function (item) {
           const unread = Number(item.unread_count || 0);
@@ -1056,11 +1036,24 @@ $walkthroughGuide = match ($walkthroughRole) {
       };
 
       chatLauncher.addEventListener('click', function () {
+        const isHidden = chatHub.classList.contains('d-none');
         chatHub.classList.toggle('d-none');
+        if (isHidden) {
+          hideIncomingPreview();
+        }
       });
       chatClose.addEventListener('click', function () {
         chatHub.classList.add('d-none');
       });
+      if (chatIncomingPreview) {
+        chatIncomingPreview.addEventListener('click', function (event) {
+          if (event.target.closest('.global-chat-incoming-preview__person')) {
+            return;
+          }
+          chatHub.classList.remove('d-none');
+          hideIncomingPreview();
+        });
+      }
 
       bindAttachmentInputs(chatNewImage, chatNewFile, chatNewAttachmentName);
 
@@ -1139,90 +1132,6 @@ $walkthroughGuide = match ($walkthroughRole) {
       window.setInterval(pollConversations, 5000);
     }
 
-    const walkthroughModalEl = document.getElementById('wdmsWalkthroughModal');
-    const walkthroughOpenBtn = document.getElementById('open-onboarding-guide');
-    const walkthroughForm = document.getElementById('wdmsWalkthroughStateForm');
-    if (walkthroughModalEl && walkthroughForm) {
-      const walkthroughGuide = <?= json_encode($walkthroughGuide, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
-      const walkthroughAutoOpen = <?= $walkthroughAutoOpen ? 'true' : 'false' ?>;
-      const walkthroughModal = new bootstrap.Modal(walkthroughModalEl);
-      const stepCountEl = document.getElementById('wdmsWalkthroughStepCount');
-      const titleEl = document.getElementById('wdmsWalkthroughTitle');
-      const bodyEl = document.getElementById('wdmsWalkthroughBody');
-      const tipEl = document.getElementById('wdmsWalkthroughTip');
-      const progressBarEl = document.getElementById('wdmsWalkthroughProgressBar');
-      const prevBtn = document.getElementById('wdmsWalkthroughPrev');
-      const nextBtn = document.getElementById('wdmsWalkthroughNext');
-      const skipBtn = document.getElementById('wdmsWalkthroughSkip');
-      let stepIndex = 0;
-      let completionSent = false;
-
-      const markWalkthroughSeen = async function () {
-        if (completionSent) return;
-        completionSent = true;
-        try {
-          const formData = new FormData(walkthroughForm);
-          await fetch(walkthroughForm.action, {
-            method: 'POST',
-            body: formData,
-            headers: {
-              'Accept': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest'
-            },
-            credentials: 'same-origin'
-          });
-        } catch (_err) {
-          completionSent = false;
-        }
-      };
-
-      const renderWalkthroughStep = function () {
-        const step = walkthroughGuide[stepIndex] || walkthroughGuide[0];
-        if (!step) return;
-        stepCountEl.textContent = 'Step ' + (stepIndex + 1) + ' of ' + walkthroughGuide.length;
-        titleEl.textContent = step.title || '';
-        bodyEl.textContent = step.body || '';
-        tipEl.textContent = step.tip || '';
-        progressBarEl.style.width = (((stepIndex + 1) / walkthroughGuide.length) * 100) + '%';
-        prevBtn.disabled = stepIndex === 0;
-        nextBtn.textContent = stepIndex >= walkthroughGuide.length - 1 ? 'Finish' : 'Next';
-      };
-
-      if (walkthroughOpenBtn) {
-        walkthroughOpenBtn.addEventListener('click', function () {
-          stepIndex = 0;
-          renderWalkthroughStep();
-          walkthroughModal.show();
-        });
-      }
-
-      prevBtn.addEventListener('click', function () {
-        if (stepIndex <= 0) return;
-        stepIndex -= 1;
-        renderWalkthroughStep();
-      });
-
-      nextBtn.addEventListener('click', async function () {
-        if (stepIndex >= walkthroughGuide.length - 1) {
-          await markWalkthroughSeen();
-          walkthroughModal.hide();
-          return;
-        }
-        stepIndex += 1;
-        renderWalkthroughStep();
-      });
-
-      skipBtn.addEventListener('click', function () {
-        walkthroughModal.hide();
-      });
-
-      renderWalkthroughStep();
-      if (walkthroughAutoOpen) {
-        window.setTimeout(function () {
-          walkthroughModal.show();
-        }, 280);
-      }
-    }
   })();
 </script>
 </body>

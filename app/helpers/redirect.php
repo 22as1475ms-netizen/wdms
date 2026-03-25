@@ -1,6 +1,6 @@
 <?php
 function redirect(string $path): void {
-  header("Location: " . BASE_URL . $path);
+  header("Location: " . wdms_base_url_path($path));
   exit;
 }
 
@@ -12,5 +12,5 @@ function workspace_home_path(): string {
   if ($role === 'DIVISION_CHIEF') {
     return '/documents?tab=division_queue';
   }
-  return '/documents?tab=private';
+  return '/documents?tab=routed';
 }

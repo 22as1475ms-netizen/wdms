@@ -53,7 +53,7 @@ class User {
     ")->fetchAll();
   }
 
-  public static function listShareRecipients(PDO $pdo, ?int $excludeUserId = null): array {
+  public static function listShareRecipients(PDO $pdo, ?int $excludeUserId = null, ?int $divisionId = null): array {
     $sql = "
       SELECT
         u.id,
@@ -72,12 +72,16 @@ class User {
       FROM users u
       LEFT JOIN divisions d ON d.id = u.division_id
       LEFT JOIN users chief ON chief.id = d.chief_user_id
-      WHERE u.role = 'EMPLOYEE' AND u.status = 'ACTIVE'
+      WHERE u.role IN ('EMPLOYEE', 'DIVISION_CHIEF') AND u.status = 'ACTIVE'
     ";
     $params = [];
     if ($excludeUserId !== null && $excludeUserId > 0) {
       $sql .= " AND u.id <> ? ";
       $params[] = $excludeUserId;
+    }
+    if ($divisionId !== null && $divisionId > 0) {
+      $sql .= " AND u.division_id = ? ";
+      $params[] = $divisionId;
     }
     $sql .= " ORDER BY COALESCE(d.name, 'ZZZ'), u.name ";
 

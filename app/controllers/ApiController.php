@@ -256,10 +256,6 @@ function api_dispatch(string $method, string $path): bool {
     if (!$target) {
       api_json(404, ['message' => 'User not found']);
     }
-    if (strtoupper((string)($doc['storage_area'] ?? 'PRIVATE')) !== 'OFFICIAL') {
-      api_json(422, ['message' => 'Only official records can be shared']);
-    }
-
     Permission::upsert($pdo, $docId, (int)$target['id'], $permission);
     AuditLog::add($pdo, $uid, "Shared document", $docId, "to=".$email.", perm=".$permission);
     api_json(200, ['ok' => true]);
@@ -344,7 +340,7 @@ function api_json(int $status, array $payload): void {
 
 function api_public_file_url(string $path): string {
   $clean = '/' . ltrim(str_replace('\\', '/', $path), '/');
-  return BASE_URL . $clean;
+  return wdms_base_url_path($clean);
 }
 
 function api_handle_chat_attachment(?array $file): array {
@@ -386,7 +382,7 @@ function api_handle_chat_attachment(?array $file): array {
     $mime = (string)($file['type'] ?? 'application/octet-stream');
   }
 
-  $dir = __DIR__ . '/../../public/uploads/chat';
+  $dir = wdms_public_upload_dir('chat');
   if (!is_dir($dir) && !mkdir($dir, 0775, true) && !is_dir($dir)) {
     api_json(500, ['message' => 'Unable to store attachment']);
   }
