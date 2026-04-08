@@ -1,6 +1,24 @@
 Options -Indexes
 DirectoryIndex index.php
 
+<IfModule php_module>
+  php_value upload_max_filesize 256M
+  php_value post_max_size 256M
+  php_value max_file_uploads 500
+</IfModule>
+
+<IfModule mod_php.c>
+  php_value upload_max_filesize 256M
+  php_value post_max_size 256M
+  php_value max_file_uploads 500
+</IfModule>
+
+<IfModule mod_php8.c>
+  php_value upload_max_filesize 256M
+  php_value post_max_size 256M
+  php_value max_file_uploads 500
+</IfModule>
+
 RewriteEngine On
 
 # Expose static files from /public without requiring /public in the URL.
