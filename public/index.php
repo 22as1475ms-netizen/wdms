@@ -14,6 +14,55 @@ require $ROOT . "/app/helpers/redirect.php";
 require $ROOT . "/app/helpers/csrf.php";
 require $ROOT . "/app/helpers/http.php";
 
+function wdms_log_throwable(Throwable $throwable): void {
+  error_log('[WDMS] ' . get_class($throwable) . ': ' . $throwable->getMessage());
+  error_log('[WDMS] in ' . $throwable->getFile() . ':' . $throwable->getLine());
+  error_log('[WDMS] trace: ' . $throwable->getTraceAsString());
+}
+
+function wdms_render_fatal_response(string $message, int $status = 500): void {
+  if (!headers_sent()) {
+    http_response_code($status);
+    header('Content-Type: text/plain; charset=utf-8');
+  }
+
+  if (APP_DEBUG) {
+    echo $message;
+    return;
+  }
+
+  echo 'Internal Server Error';
+}
+
+set_exception_handler(static function (Throwable $throwable): void {
+  wdms_log_throwable($throwable);
+  wdms_render_fatal_response($throwable->getMessage(), 500);
+});
+
+set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
+  if (!(error_reporting() & $severity)) {
+    return false;
+  }
+
+  throw new ErrorException($message, 0, $severity, $file, $line);
+});
+
+register_shutdown_function(static function (): void {
+  $error = error_get_last();
+  if (!$error) {
+    return;
+  }
+
+  $fatalTypes = [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR];
+  if (!in_array((int)$error['type'], $fatalTypes, true)) {
+    return;
+  }
+
+  $message = sprintf('%s in %s:%d', (string)$error['message'], (string)$error['file'], (int)$error['line']);
+  error_log('[WDMS] shutdown fatal: ' . $message);
+  wdms_render_fatal_response($message, 500);
+});
+
 function wdms_normalized_request_path(): string {
   $path = (string)parse_url((string)($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
   if (BASE_URL !== '' && str_starts_with($path, BASE_URL)) {
