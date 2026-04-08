@@ -10,6 +10,8 @@ require_once __DIR__ . "/../models/ChatMessage.php";
 require_once __DIR__ . "/../services/AuthService.php";
 require_once __DIR__ . "/../services/AccessService.php";
 require_once __DIR__ . "/../services/DocumentService.php";
+require_once __DIR__ . "/../services/DocumentShareService.php";
+require_once __DIR__ . "/../services/StorageService.php";
 
 function api_selected_owner_id(PDO $pdo, int $sessionUserId): int {
   $isAdmin = (($_SESSION['user']['role'] ?? '') === 'ADMIN');
@@ -31,6 +33,7 @@ function api_chat_allowed(): bool {
 
 function api_dispatch(string $method, string $path): bool {
   global $pdo;
+  $method = strtoupper($method);
 
   if ($path === '/api/auth/login' && $method === 'POST') {
     $data = api_input();
@@ -39,6 +42,7 @@ function api_dispatch(string $method, string $path): bool {
   }
 
   if ($path === '/api/auth/logout' && $method === 'POST') {
+    api_require_write_request();
     if (!empty($_SESSION['user']['id'])) {
       AuditLog::add($pdo, (int)$_SESSION['user']['id'], "Logged out", null, null);
     }
@@ -139,7 +143,7 @@ function api_dispatch(string $method, string $path): bool {
   }
 
   if ($path === '/api/chat/send' && $method === 'POST') {
-    api_require_login();
+    api_require_write_request();
     if (!api_chat_allowed()) {
       api_json(403, ['message' => 'Chat unavailable']);
     }
@@ -189,13 +193,25 @@ function api_dispatch(string $method, string $path): bool {
   }
 
   if ($path === '/api/documents' && $method === 'POST') {
-    api_require_login();
+    api_require_write_request();
     $uid = (int)$_SESSION['user']['id'];
     $folderId = req_int('folder_id', 0) ?: null;
     $ownerId = api_selected_owner_id($pdo, $uid);
 
     if (!empty($_FILES['file'])) {
-      $docId = DocumentService::upload($pdo, $_FILES['file'], $ownerId, $folderId, $uid);
+      $pdo->beginTransaction();
+      try {
+        $docId = DocumentService::upload($pdo, $_FILES['file'], $ownerId, $folderId, $uid);
+        $pdo->commit();
+      } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+          $pdo->rollBack();
+        }
+        if (function_exists('upload_debug_log')) {
+          upload_debug_log($e);
+        }
+        api_json(422, ['message' => 'Upload failed']);
+      }
       api_json(201, ['id' => $docId]);
     }
 
@@ -214,6 +230,7 @@ function api_dispatch(string $method, string $path): bool {
     }
 
     if ($method === 'PUT') {
+      api_require_write_request();
       api_require_edit($pdo, $docId, $uid);
       $data = api_input();
       $name = trim((string)($data['name'] ?? ''));
@@ -226,6 +243,7 @@ function api_dispatch(string $method, string $path): bool {
     }
 
     if ($method === 'DELETE') {
+      api_require_write_request();
       $doc = Document::get($pdo, $docId);
       if (!$doc || !api_can_manage_document($doc, $uid)) {
         api_json(403, ['message' => 'Owner access required']);
@@ -237,28 +255,32 @@ function api_dispatch(string $method, string $path): bool {
   }
 
   if (preg_match('#^/api/documents/(\d+)/share$#', $path, $m) && $method === 'POST') {
-    api_require_login();
+    api_require_write_request();
     $docId = (int)$m[1];
     $uid = (int)$_SESSION['user']['id'];
     $doc = Document::get($pdo, $docId);
-    if (!$doc || !api_can_manage_document($doc, $uid)) {
-      api_json(403, ['message' => 'Owner access required']);
+    if (!$doc) {
+      api_json(404, ['message' => 'Not found']);
     }
 
     $data = api_input();
     $email = trim((string)($data['email'] ?? ''));
-    $permission = trim((string)($data['permission'] ?? 'viewer'));
-    if (!in_array($permission, ['viewer', 'editor'], true)) {
-      $permission = 'viewer';
-    }
-
     $target = User::findByEmail($pdo, $email);
     if (!$target) {
       api_json(404, ['message' => 'User not found']);
     }
-    Permission::upsert($pdo, $docId, (int)$target['id'], $permission);
-    AuditLog::add($pdo, $uid, "Shared document", $docId, "to=".$email.", perm=".$permission);
-    api_json(200, ['ok' => true]);
+    try {
+      $result = DocumentShareService::shareDocument($pdo, $doc, $uid, $target, trim((string)($data['permission'] ?? 'viewer')));
+    } catch (RuntimeException $e) {
+      $error = $e->getMessage();
+      $status = match ($error) {
+        'forbidden' => 403,
+        'user_not_found', 'cannot_share_self', 'share_in_progress' => 422,
+        default => 400,
+      };
+      api_json($status, ['ok' => false, 'message' => $error]);
+    }
+    api_json(200, ['ok' => true, 'share' => $result]);
   }
 
   if (preg_match('#^/api/documents/(\d+)/permissions$#', $path, $m) && $method === 'GET') {
@@ -306,6 +328,20 @@ function api_require_login(): void {
     session_destroy();
     api_json(403, ['message' => 'Account disabled']);
   }
+
+  $now = time();
+  $timeout = SESSION_TIMEOUT_MINUTES * 60;
+  $lastActivity = (int)($_SESSION['_last_activity'] ?? $now);
+  if ($timeout > 0 && ($now - $lastActivity) > $timeout) {
+    session_destroy();
+    api_json(401, ['message' => 'Session expired']);
+  }
+  $_SESSION['_last_activity'] = $now;
+}
+
+function api_require_write_request(): void {
+  api_require_login();
+  csrf_verify(['POST', 'PUT', 'PATCH', 'DELETE']);
 }
 
 function api_require_view(PDO $pdo, int $docId, int $userId): void {
@@ -339,11 +375,16 @@ function api_json(int $status, array $payload): void {
 }
 
 function api_public_file_url(string $path): string {
+  if (preg_match('#^https?://#i', $path)) {
+    return $path;
+  }
   $clean = '/' . ltrim(str_replace('\\', '/', $path), '/');
   return wdms_base_url_path($clean);
 }
 
 function api_handle_chat_attachment(?array $file): array {
+  global $pdo;
+
   if (!$file || empty($file['name'])) {
     return [];
   }
@@ -382,24 +423,25 @@ function api_handle_chat_attachment(?array $file): array {
     $mime = (string)($file['type'] ?? 'application/octet-stream');
   }
 
-  $dir = wdms_public_upload_dir('chat');
-  if (!is_dir($dir) && !mkdir($dir, 0775, true) && !is_dir($dir)) {
-    api_json(500, ['message' => 'Unable to store attachment']);
-  }
-
   $safeBase = preg_replace('/[^a-zA-Z0-9._-]/', '_', (string)pathinfo($originalName, PATHINFO_FILENAME));
   $safeBase = trim((string)$safeBase, '._-');
   if ($safeBase === '') {
     $safeBase = 'file';
   }
   $filename = $safeBase . '_' . bin2hex(random_bytes(6)) . '.' . $ext;
-  $targetPath = $dir . '/' . $filename;
-  if (!move_uploaded_file($tmpPath, $targetPath)) {
+  $storageKey = 'public/chat/' . $filename;
+  if (!StorageService::storeUploadedFile($pdo, $file, $storageKey, [
+    'kind' => 'chat_attachment',
+    'visibility' => 'private',
+    'original_name' => $originalName,
+    'mime_type' => $mime,
+    'created_by' => (int)($_SESSION['user']['id'] ?? 0),
+  ])) {
     api_json(500, ['message' => 'Unable to save attachment']);
   }
 
   return [
-    'path' => '/uploads/chat/' . $filename,
+    'path' => StorageService::publicMediaUrl($storageKey, true),
     'name' => $originalName,
     'mime' => $mime,
   ];

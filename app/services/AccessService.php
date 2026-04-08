@@ -26,7 +26,6 @@ class AccessService {
       if ($reviewAcceptance === 'DECLINED') {
         return 'division_chief_declined';
       }
-      return null;
     }
 
     $permission = Permission::findRowForUser($pdo, $docId, $userId);

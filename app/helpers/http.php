@@ -77,6 +77,13 @@ function ui_message(string $raw): string {
     'file_creation_disabled' => 'In-app file creation is disabled. Upload files instead.',
     'name_conflict' => 'A file with the same name already exists in this folder.',
     'upload_failed' => 'Upload failed. Please try again.',
+    'upload_ini_size_exceeded' => 'Upload failed because the file exceeds the server upload_max_filesize limit.',
+    'upload_post_max_exceeded' => 'Upload failed because the full request exceeds the server post_max_size limit.',
+    'upload_form_size_exceeded' => 'Upload failed because the file exceeds the form upload size limit.',
+    'upload_partial' => 'Upload failed because the file was only partially uploaded.',
+    'upload_no_tmp_dir' => 'Upload failed because the server temporary upload folder is missing.',
+    'upload_cant_write' => 'Upload failed because the server could not write the uploaded file.',
+    'upload_blocked_by_extension' => 'Upload failed because a PHP extension blocked the file upload.',
     'document_code_required' => 'Doc. ID is required before uploading a document.',
     'document_title_required' => 'Document title or subject is required.',
     'signatory_required' => 'Signatory is required.',
@@ -250,6 +257,9 @@ function avatar_photo_url(array $user): ?string {
   $photo = trim((string)($user['avatar_photo'] ?? ''));
   if ($photo === '') {
     return null;
+  }
+  if (preg_match('#^https?://#i', $photo)) {
+    return $photo;
   }
   if (!str_starts_with($photo, '/')) {
     $photo = '/' . $photo;

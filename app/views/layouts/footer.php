@@ -399,6 +399,7 @@ $walkthroughGuide = match ($walkthroughRole) {
     const alertsItemsEl = document.getElementById('app-alert-items');
     if (alertsCountEl && alertsDotEl && alertsItemsEl) {
       const baseUrl = '<?= BASE_URL ?>';
+      const csrfToken = '<?= e(csrf_token()) ?>';
       const escapeHtml = function (value) {
         return String(value || '')
           .replace(/&/g, '&amp;')
@@ -511,6 +512,7 @@ $walkthroughGuide = match ($walkthroughRole) {
               body: formData,
               headers: {
                 'Accept': 'application/json',
+                'X-CSRF-Token': csrfToken,
                 'X-Requested-With': 'XMLHttpRequest'
               },
               credentials: 'same-origin'
@@ -536,6 +538,7 @@ $walkthroughGuide = match ($walkthroughRole) {
               body: formData,
               headers: {
                 'Accept': 'application/json',
+                'X-CSRF-Token': csrfToken,
                 'X-Requested-With': 'XMLHttpRequest'
               },
               credentials: 'same-origin'
@@ -581,6 +584,7 @@ $walkthroughGuide = match ($walkthroughRole) {
       const chatImageModalImage = document.getElementById('wdmsChatImageModalImage');
       if (chatLauncher && chatHub && chatClose && chatConversations && chatUnread && chatUnreadDot && chatDock) {
       const baseUrl = '<?= BASE_URL ?>';
+      const csrfToken = '<?= e(csrf_token()) ?>';
       const openWindows = {};
       const minimizedWindows = {};
       const peerCache = {};
@@ -772,7 +776,10 @@ $walkthroughGuide = match ($walkthroughRole) {
         try {
           const res = await fetch(baseUrl + '/api/chat/thread/' + encodeURIComponent(peerId), {
             method: 'DELETE',
-            headers: { 'Accept': 'application/json' },
+            headers: {
+              'Accept': 'application/json',
+              'X-CSRF-Token': csrfToken
+            },
             credentials: 'same-origin'
           });
           if (!res.ok) return false;
@@ -906,10 +913,14 @@ $walkthroughGuide = match ($walkthroughRole) {
           if (file) {
             payload.set('attachment', file);
           }
+          payload.set('_csrf', csrfToken);
           try {
             const res = await fetch(baseUrl + '/api/chat/send', {
               method: 'POST',
-              headers: { 'Accept': 'application/json' },
+              headers: {
+                'Accept': 'application/json',
+                'X-CSRF-Token': csrfToken
+              },
               credentials: 'same-origin',
               body: payload
             });
@@ -1110,10 +1121,14 @@ $walkthroughGuide = match ($walkthroughRole) {
           if (file) {
             payload.set('attachment', file);
           }
+          payload.set('_csrf', csrfToken);
           try {
             const res = await fetch(baseUrl + '/api/chat/send', {
               method: 'POST',
-              headers: { 'Accept': 'application/json' },
+              headers: {
+                'Accept': 'application/json',
+                'X-CSRF-Token': csrfToken
+              },
               credentials: 'same-origin',
               body: payload
             });

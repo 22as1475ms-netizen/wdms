@@ -2,9 +2,24 @@
 require_once __DIR__ . "/../models/Document.php";
 require_once __DIR__ . "/../models/Version.php";
 require_once __DIR__ . "/../models/AuditLog.php";
+require_once __DIR__ . "/StorageService.php";
 
 class DocumentService {
   private const EDITABLE_EXTENSIONS = ['docx', 'xlsx', 'xls'];
+  private const ALLOWED_UPLOAD_MIME_TYPES = [
+    'csv' => ['text/csv', 'text/plain', 'application/csv', 'application/vnd.ms-excel'],
+    'doc' => ['application/msword', 'application/octet-stream'],
+    'docx' => ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/zip', 'application/octet-stream'],
+    'jpg' => ['image/jpeg'],
+    'jpeg' => ['image/jpeg'],
+    'pdf' => ['application/pdf'],
+    'png' => ['image/png'],
+    'ppt' => ['application/vnd.ms-powerpoint', 'application/octet-stream'],
+    'pptx' => ['application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/zip', 'application/octet-stream'],
+    'txt' => ['text/plain'],
+    'xls' => ['application/vnd.ms-excel', 'application/octet-stream'],
+    'xlsx' => ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/zip', 'application/octet-stream'],
+  ];
 
   public static function upload(
     PDO $pdo,
@@ -16,7 +31,7 @@ class DocumentService {
     ?int $divisionId = null,
     array $metadata = []
   ): int {
-    if (!isset($file['tmp_name']) || !is_uploaded_file($file['tmp_name'])) {
+    if (!isset($file['tmp_name']) || !self::isAcceptedUploadSource((string)$file['tmp_name'])) {
       throw new RuntimeException("Invalid upload");
     }
 
@@ -27,7 +42,6 @@ class DocumentService {
     $storageArea = Document::normalizeStorageArea($storageArea);
     $docId = Document::create($pdo, $ownerId, $folderId, $original, $storageArea, $divisionId, $metadata);
     self::storeUploadedVersion($pdo, $docId, $file, $actorId);
-
     AuditLog::add($pdo, $actorId, "Uploaded document", $docId, $original);
 
     return $docId;
@@ -52,22 +66,27 @@ class DocumentService {
       throw new RuntimeException("Version not found");
     }
 
-    $sourcePath = self::absolutePathFromVersion($source['file_path']);
-    if (!is_file($sourcePath)) {
+    $sourcePath = (string)$source['file_path'];
+    if (!StorageService::exists($pdo, $sourcePath)) {
       throw new RuntimeException("Source file missing");
     }
 
     $next = Version::nextNumber($pdo, $docId);
     $safeName = self::buildStoredFilename($docId, $next, $doc['name']);
     $storageArea = (string)($doc['storage_area'] ?? 'PRIVATE');
-    $targetPath = self::absolutePathForOwner((int)$doc['owner_id'], $safeName, $storageArea);
-    self::assertWithinQuota((int)$doc['owner_id'], filesize($sourcePath) ?: 0, $storageArea);
+    $targetPath = self::relativePath((int)$doc['owner_id'], $safeName, $storageArea);
+    self::assertWithinQuota((int)$doc['owner_id'], StorageService::size($pdo, $sourcePath), $storageArea);
 
-    if (!copy($sourcePath, $targetPath)) {
+    if (!StorageService::copy($pdo, $sourcePath, $targetPath, [
+      'kind' => 'document_version',
+      'visibility' => 'private',
+      'original_name' => (string)$doc['name'],
+      'created_by' => $userId,
+    ])) {
       throw new RuntimeException("Failed to restore version");
     }
 
-    Version::add($pdo, $docId, $userId, self::relativePath((int)$doc['owner_id'], $safeName, $storageArea), $next);
+    Version::add($pdo, $docId, $userId, $targetPath, $next);
     self::archiveNonLatestVersions($pdo, $docId, (int)$doc['owner_id'], $next, $storageArea);
     AuditLog::add($pdo, $userId, "Restored version", $docId, "from=".$source['version_number'].",to=".$next);
 
@@ -78,17 +97,9 @@ class DocumentService {
     $totalBytes = 0;
     $files = 0;
 
-    if (is_dir(STORAGE_DIR)) {
-      $iterator = new RecursiveIteratorIterator(
-        new RecursiveDirectoryIterator(STORAGE_DIR, FilesystemIterator::SKIP_DOTS)
-      );
-      foreach ($iterator as $item) {
-        if ($item->isFile()) {
-          $files++;
-          $totalBytes += $item->getSize();
-        }
-      }
-    }
+    $usage = StorageService::storageUsage($pdo, ['../storage/documents/']);
+    $files = (int)$usage['files'];
+    $totalBytes = (int)$usage['bytes'];
 
     return [
       'documents' => Document::countActive($pdo),
@@ -125,15 +136,7 @@ class DocumentService {
   }
 
   public static function absolutePathFromVersion(string $filePath): string {
-    $normalized = str_replace(['\\', '..'], ['/', ''], $filePath);
-    $prefix = '/storage/documents/';
-    $pos = strpos($normalized, $prefix);
-    if ($pos !== false) {
-      $normalized = substr($normalized, $pos + strlen($prefix));
-    }
-
-    $normalized = ltrim($normalized, '/');
-    return rtrim(STORAGE_DIR, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $normalized);
+    return StorageService::absoluteDocumentPath($filePath);
   }
 
   public static function signedDocumentToken(int $docId): string {
@@ -145,7 +148,7 @@ class DocumentService {
   }
 
   private static function storeUploadedVersion(PDO $pdo, int $docId, array $file, int $userId): int {
-    if (!isset($file['tmp_name']) || !is_uploaded_file($file['tmp_name'])) {
+    if (!isset($file['tmp_name']) || !self::isAcceptedUploadSource((string)$file['tmp_name'])) {
       throw new RuntimeException("Invalid upload");
     }
 
@@ -167,13 +170,18 @@ class DocumentService {
     self::assertWithinQuota((int)$doc['owner_id'], (int)($file['size'] ?? 0), $storageArea);
 
     $safeName = self::buildStoredFilename($docId, $ver, $sourceName);
-    $absPath = self::absolutePathForOwner((int)$doc['owner_id'], $safeName, $storageArea);
-
-    if (!move_uploaded_file($file['tmp_name'], $absPath)) {
+    $relativePath = self::relativePath((int)$doc['owner_id'], $safeName, $storageArea);
+    if (!StorageService::storeUploadedFile($pdo, $file, $relativePath, [
+      'kind' => 'document_version',
+      'visibility' => 'private',
+      'original_name' => $sourceName,
+      'mime_type' => self::detectMimeType((string)$file['tmp_name']),
+      'created_by' => $userId,
+    ])) {
       throw new RuntimeException("Failed to store file");
     }
 
-    Version::add($pdo, $docId, $userId, self::relativePath((int)$doc['owner_id'], $safeName, $storageArea), $ver);
+    Version::add($pdo, $docId, $userId, $relativePath, $ver);
     self::archiveNonLatestVersions($pdo, $docId, (int)$doc['owner_id'], $ver, $storageArea);
     return $ver;
   }
@@ -183,49 +191,33 @@ class DocumentService {
       return;
     }
 
-    $s = $pdo->prepare("
-      SELECT id, file_path, version_number
-      FROM document_versions
-      WHERE document_id = ? AND version_number < ?
-      ORDER BY version_number ASC
-    ");
+    $s = $pdo->prepare("\n      SELECT id, file_path, version_number\n      FROM document_versions\n      WHERE document_id = ? AND version_number < ?\n      ORDER BY version_number ASC\n    ");
     $s->execute([$docId, $latestVersionNumber]);
     $rows = $s->fetchAll();
 
     foreach ($rows as $row) {
-      $currentPath = self::absolutePathFromVersion((string)$row['file_path']);
-      if (!is_file($currentPath)) {
+      $currentPath = (string)$row['file_path'];
+      if (!StorageService::exists($pdo, $currentPath)) {
         continue;
       }
 
       $base = basename($currentPath);
-      $targetPath = self::absolutePathForArchivedVersion($ownerId, $docId, $base, $storageArea);
+      $targetPath = self::relativePathForArchivedVersion($ownerId, $docId, $base, $storageArea);
       if (strtolower($currentPath) === strtolower($targetPath)) {
         continue;
       }
 
-      $targetPath = self::resolveArchiveCollision($targetPath);
-      if (!@rename($currentPath, $targetPath)) {
-        if (!@copy($currentPath, $targetPath) || !@unlink($currentPath)) {
+      $targetPath = self::resolveArchiveCollision($pdo, $targetPath);
+      if (!StorageService::move($pdo, $currentPath, $targetPath)) {
+        if (!StorageService::copy($pdo, $currentPath, $targetPath) ) {
           continue;
         }
+        StorageService::delete($pdo, $currentPath);
       }
 
-      $rel = self::relativePathForArchivedVersion($ownerId, $docId, basename($targetPath), $storageArea);
       $u = $pdo->prepare("UPDATE document_versions SET file_path=? WHERE id=?");
-      $u->execute([$rel, (int)$row['id']]);
+      $u->execute([$targetPath, (int)$row['id']]);
     }
-  }
-
-  private static function absolutePathForArchivedVersion(int $ownerId, int $docId, string $basename, string $storageArea = 'PRIVATE'): string {
-    $dir = self::storageRootForArea($storageArea)
-      . DIRECTORY_SEPARATOR . $ownerId
-      . DIRECTORY_SEPARATOR . 'previous_versions'
-      . DIRECTORY_SEPARATOR . $docId;
-    if (!is_dir($dir) && !mkdir($dir, 0777, true) && !is_dir($dir)) {
-      throw new RuntimeException("Failed to create archived versions directory");
-    }
-    return $dir . DIRECTORY_SEPARATOR . $basename;
   }
 
   private static function relativePathForArchivedVersion(int $ownerId, int $docId, string $basename, string $storageArea = 'PRIVATE'): string {
@@ -233,16 +225,16 @@ class DocumentService {
     return "../storage/documents/" . $segment . "/" . $ownerId . "/previous_versions/" . $docId . "/" . $basename;
   }
 
-  private static function resolveArchiveCollision(string $targetPath): string {
-    if (!file_exists($targetPath)) {
+  private static function resolveArchiveCollision(PDO $pdo, string $targetPath): string {
+    if (!StorageService::exists($pdo, $targetPath)) {
       return $targetPath;
     }
 
-    $dir = dirname($targetPath);
+    $dir = dirname(str_replace('\\', '/', $targetPath));
     $name = pathinfo($targetPath, PATHINFO_FILENAME);
     $ext = pathinfo($targetPath, PATHINFO_EXTENSION);
     $suffix = '_' . time();
-    return $dir . DIRECTORY_SEPARATOR . $name . $suffix . ($ext !== '' ? '.' . $ext : '');
+    return rtrim(str_replace('\\', '/', $dir), '/') . '/' . $name . $suffix . ($ext !== '' ? '.' . $ext : '');
   }
 
   private static function normalizeEditableExtension(string $extension): ?string {
@@ -251,6 +243,16 @@ class DocumentService {
   }
 
   private static function assertUploadConstraints(array $file, int $actorId): void {
+    $error = (int)($file['error'] ?? UPLOAD_ERR_OK);
+    if ($error !== UPLOAD_ERR_OK) {
+      throw new RuntimeException("Upload failed");
+    }
+
+    $tmpName = (string)($file['tmp_name'] ?? '');
+    if ($tmpName === '' || !self::isAcceptedUploadSource($tmpName)) {
+      throw new RuntimeException("Invalid upload");
+    }
+
     $size = (int)($file['size'] ?? 0);
     $userRole = strtoupper((string)($_SESSION['user']['role'] ?? 'USER'));
     $max = $userRole === 'ADMIN' ? MAX_UPLOAD_BYTES_ADMIN : MAX_UPLOAD_BYTES_USER;
@@ -258,33 +260,33 @@ class DocumentService {
     if ($size <= 0 || $size > $max) {
       throw new RuntimeException("File exceeds upload size policy");
     }
+
+    $extension = strtolower((string)pathinfo((string)($file['name'] ?? ''), PATHINFO_EXTENSION));
+    if (!isset(self::ALLOWED_UPLOAD_MIME_TYPES[$extension])) {
+      throw new RuntimeException("Unsupported file type");
+    }
+
+    $mime = self::detectMimeType($tmpName);
+    if ($mime === null) {
+      return;
+    }
+
+    if (!in_array($mime, self::ALLOWED_UPLOAD_MIME_TYPES[$extension], true)) {
+      throw new RuntimeException("Uploaded file content does not match its extension");
+    }
   }
 
   private static function ownerStorageBytes(int $ownerId, string $storageArea = 'ALL'): int {
     $storageArea = strtoupper(trim($storageArea));
-    $roots = [];
+    $prefixes = [];
     if ($storageArea === 'ALL' || $storageArea === 'PRIVATE') {
-      $roots[] = self::storageRootForArea('PRIVATE') . DIRECTORY_SEPARATOR . $ownerId;
+      $prefixes[] = "../storage/documents/private/" . $ownerId . "/";
     }
     if ($storageArea === 'ALL' || $storageArea === 'OFFICIAL') {
-      $roots[] = self::storageRootForArea('OFFICIAL') . DIRECTORY_SEPARATOR . $ownerId;
+      $prefixes[] = "../storage/documents/official/" . $ownerId . "/";
     }
 
-    $bytes = 0;
-    foreach ($roots as $dir) {
-      if (!is_dir($dir)) {
-        continue;
-      }
-      $iterator = new RecursiveIteratorIterator(
-        new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS)
-      );
-      foreach ($iterator as $item) {
-        if ($item->isFile()) {
-          $bytes += $item->getSize();
-        }
-      }
-    }
-    return $bytes;
+    return (int)StorageService::storageUsage($GLOBALS['pdo'], $prefixes)['bytes'];
   }
 
   private static function assertWithinQuota(int $ownerId, int $incomingBytes, string $storageArea = 'PRIVATE'): void {
@@ -303,27 +305,44 @@ class DocumentService {
     return trim((string)$clean) ?: 'file';
   }
 
+  private static function detectMimeType(string $path): ?string {
+    if (!is_file($path)) {
+      return null;
+    }
+
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    if ($finfo === false) {
+      return null;
+    }
+
+    $mime = finfo_file($finfo, $path);
+    finfo_close($finfo);
+    if ($mime === false) {
+      return null;
+    }
+
+    return strtolower(trim((string)$mime));
+  }
+
+  private static function isAcceptedUploadSource(string $tmpName): bool {
+    if ($tmpName === '') {
+      return false;
+    }
+
+    if (is_uploaded_file($tmpName)) {
+      return true;
+    }
+
+    return defined('WDMS_TEST_MODE') && WDMS_TEST_MODE && is_file($tmpName);
+  }
+
   private static function buildStoredFilename(int $docId, int $version, string $originalName): string {
     $ext = pathinfo($originalName, PATHINFO_EXTENSION);
     return "doc{$docId}_v{$version}_" . time() . ($ext ? ".{$ext}" : "");
   }
 
-  private static function absolutePathForOwner(int $ownerId, string $basename, string $storageArea = 'PRIVATE'): string {
-    $dir = self::storageRootForArea($storageArea) . DIRECTORY_SEPARATOR . $ownerId;
-    if (!is_dir($dir) && !mkdir($dir, 0777, true) && !is_dir($dir)) {
-      throw new RuntimeException("Failed to create storage directory");
-    }
-
-    return $dir . DIRECTORY_SEPARATOR . $basename;
-  }
-
   private static function relativePath(int $ownerId, string $basename, string $storageArea = 'PRIVATE'): string {
     $segment = strtolower(Document::normalizeStorageArea($storageArea));
     return "../storage/documents/" . $segment . "/" . $ownerId . "/" . $basename;
-  }
-
-  private static function storageRootForArea(string $storageArea): string {
-    $segment = strtolower(Document::normalizeStorageArea($storageArea));
-    return rtrim(STORAGE_DIR, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $segment;
   }
 }

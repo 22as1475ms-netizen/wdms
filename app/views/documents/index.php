@@ -1,6 +1,48 @@
 ﻿<?php require __DIR__ . "/../layouts/header.php"; ?>
 <?php require_once __DIR__ . "/../../helpers/csrf.php"; ?>
 <?php require_once __DIR__ . "/../../helpers/http.php"; ?>
+<style>
+  .workspace-empty-state {
+    min-height: 320px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 2rem 1rem;
+  }
+
+  .workspace-empty-state__content {
+    max-width: 320px;
+    color: #6d8ea0;
+  }
+
+  .workspace-empty-state__icon {
+    width: 72px;
+    height: 72px;
+    margin: 0 auto 1rem;
+    border-radius: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg, #f7fbfe 0%, #e9f4fb 100%);
+    color: #4f7c92;
+    font-size: 2rem;
+    box-shadow: inset 0 0 0 1px rgba(131, 175, 199, 0.28);
+  }
+
+  .workspace-empty-state__title {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #244a63;
+  }
+
+  .workspace-empty-state__copy {
+    margin: 0.5rem 0 0;
+    font-size: 0.96rem;
+    line-height: 1.55;
+  }
+</style>
 <?php
 $pages = max(1, (int)ceil($total / max(1, $per)));
 $filters = $filters ?? [];
@@ -125,14 +167,14 @@ function document_card_preview(array $doc): array {
   $fileUrl = BASE_URL . '/documents/file?id=' . $docId . '&sig=' . DocumentService::signedDocumentToken($docId);
   $latestPath = (string)($doc['latest_file_path'] ?? '');
 
-  if ($ext === 'pdf') {
+  if ($latestPath !== '' && $ext === 'pdf') {
     return [
       'kind' => 'pdf',
       'url' => $fileUrl,
     ];
   }
 
-  if (in_array($ext, ['png', 'jpg', 'jpeg', 'gif', 'webp'], true)) {
+  if ($latestPath !== '' && in_array($ext, ['png', 'jpg', 'jpeg', 'gif', 'webp'], true)) {
     return [
       'kind' => 'image',
       'url' => $fileUrl,
@@ -140,8 +182,9 @@ function document_card_preview(array $doc): array {
   }
 
   if ($latestPath !== '' && in_array($ext, ['txt', 'md', 'csv', 'json', 'xml', 'html', 'css', 'js', 'ts', 'php'], true)) {
-    $abs = DocumentService::absolutePathFromVersion($latestPath);
-    $text = function_exists('document_text_preview') ? document_text_preview($abs) : null;
+    $text = function_exists('document_text_preview')
+      ? StorageService::withReadablePath($GLOBALS['pdo'], $latestPath, static fn(string $path): ?string => document_text_preview($path))
+      : null;
     if ($text !== null && trim($text) !== '') {
       return [
         'kind' => 'text',
@@ -151,8 +194,9 @@ function document_card_preview(array $doc): array {
   }
 
   if ($latestPath !== '' && $ext === 'docx') {
-    $abs = DocumentService::absolutePathFromVersion($latestPath);
-    $text = function_exists('document_docx_text_preview') ? document_docx_text_preview($abs) : null;
+    $text = function_exists('document_docx_text_preview')
+      ? StorageService::withReadablePath($GLOBALS['pdo'], $latestPath, static fn(string $path): ?string => document_docx_text_preview($path))
+      : null;
     if ($text !== null && trim($text) !== '') {
       return [
         'kind' => 'docx-text',
@@ -208,6 +252,28 @@ function routing_status_label(?string $value): string {
     'REJECTED' => 'Rejected',
     default => 'Available with owner',
   };
+}
+
+function route_outcome_label(?string $value): string {
+  return match (strtoupper(trim((string)$value))) {
+    'APPROVED' => 'Approved',
+    'RETURNED' => 'Returned',
+    'REJECTED' => 'Rejected',
+    'ARCHIVED' => 'Archived',
+    default => 'Active',
+  };
+}
+
+function route_lifecycle_label(array $doc): string {
+  $closedAt = trim((string)($doc['route_closed_at'] ?? ''));
+  if ($closedAt !== '') {
+    return 'Route closed: ' . route_outcome_label((string)($doc['route_outcome'] ?? 'ACTIVE'));
+  }
+  $routingStatus = strtoupper(trim((string)($doc['routing_status'] ?? 'AVAILABLE')));
+  if ($routingStatus === 'AVAILABLE') {
+    return 'Available with owner';
+  }
+  return 'Route active';
 }
 
 function priority_level_label(?string $value): string {
@@ -415,9 +481,9 @@ foreach (($docs ?? []) as $navDoc) {
 
       <?php if($canUploadHere || $canCreateFolder): ?>
         <div class="drive-sidebar__section drive-sidebar__section--helper">
-          <span class="drive-label">Create & Upload</span>
+          <span class="drive-label">Upload Files</span>
           <div class="drive-note drive-note--soft">
-            Use the <strong>+ New</strong> button in the workspace header for file upload.
+            Use the <strong>Upload</strong> button in the workspace header to add files.
           </div>
         </div>
       <?php endif; ?>
@@ -701,7 +767,39 @@ foreach (($docs ?? []) as $navDoc) {
           <?php endif; ?>
 
           <?php if(empty($docs) && empty($trashedFolders)): ?>
-            <div class="table-empty">No records found in this view.</div>
+            <?php if($tab === 'trash'): ?>
+              <div class="workspace-empty-state">
+                <div class="workspace-empty-state__content">
+                  <div class="workspace-empty-state__icon">
+                    <i class="bi bi-trash3"></i>
+                  </div>
+                  <p class="workspace-empty-state__title">There are no files in Trash</p>
+                  <p class="workspace-empty-state__copy">Deleted files will appear here until they are restored or permanently removed.</p>
+                </div>
+              </div>
+            <?php elseif($tab === 'shared'): ?>
+              <div class="workspace-empty-state">
+                <div class="workspace-empty-state__content">
+                  <div class="workspace-empty-state__icon">
+                    <i class="bi bi-send"></i>
+                  </div>
+                  <p class="workspace-empty-state__title">There are no shared files</p>
+                  <p class="workspace-empty-state__copy">Files shared with you, or routed through you, will appear here when they are available.</p>
+                </div>
+              </div>
+            <?php elseif($tab === 'routed'): ?>
+              <div class="workspace-empty-state">
+                <div class="workspace-empty-state__content">
+                  <div class="workspace-empty-state__icon">
+                    <i class="bi bi-folder2-open"></i>
+                  </div>
+                  <p class="workspace-empty-state__title">There are no files yet</p>
+                  <p class="workspace-empty-state__copy">Use the Upload button in the workspace header to add your first file here.</p>
+                </div>
+              </div>
+            <?php else: ?>
+              <div class="table-empty">No records found in this view.</div>
+            <?php endif; ?>
           <?php else: ?>
             <?php if(!empty($docs)): ?>
               <?php if($canManageTrash): ?>
@@ -717,9 +815,25 @@ foreach (($docs ?? []) as $navDoc) {
                 <?php $sharedAccepted = $tab !== 'shared' || !empty($d['accepted_at']) || (int)($d['owner_id'] ?? 0) === (int)($_SESSION['user']['id'] ?? 0); ?>
                 <?php $canOwnFileActions = $isAdmin || (int)($d['owner_id'] ?? 0) === (int)($_SESSION['user']['id'] ?? 0); ?>
                 <?php $hasOutgoingSharedLink = $tab === 'shared' && (string)($d['shared_scope'] ?? '') === 'outgoing'; ?>
-                <?php $isCardShareLocked = in_array(strtoupper((string)($d['routing_status'] ?? 'AVAILABLE')), ['PENDING_SHARE_ACCEPTANCE', 'SHARE_ACCEPTED', 'PENDING_REVIEW_ACCEPTANCE', 'IN_REVIEW'], true) || $hasOutgoingSharedLink; ?>
+                <?php $cardRoutingStatus = strtoupper((string)($d['routing_status'] ?? 'AVAILABLE')); ?>
+                <?php $isAcceptedSharedHolder = $tab === 'shared' && !$hasOutgoingSharedLink && !empty($d['accepted_at']); ?>
+                <?php $isAcceptedSharedChiefHolder = $isAcceptedSharedHolder && strtoupper((string)($_SESSION['user']['role'] ?? 'EMPLOYEE')) === 'DIVISION_CHIEF'; ?>
+                <?php $isAcceptedReviewerHolder = $tab === 'division_queue' && strtoupper((string)($d['review_acceptance_status'] ?? 'NOT_SENT')) === 'ACCEPTED'; ?>
+                <?php $isPendingSharedHolder = $tab === 'shared' && !$hasOutgoingSharedLink && empty($d['accepted_at']) && empty($d['declined_at']); ?>
+                <?php $isDeclinedSharedHolder = $tab === 'shared' && !$hasOutgoingSharedLink && !empty($d['declined_at']); ?>
+                <?php $isPendingReviewHolder = $tab === 'division_queue' && strtoupper((string)($d['review_acceptance_status'] ?? 'NOT_SENT')) === 'PENDING'; ?>
+                <?php $isDeclinedReviewHolder = $tab === 'division_queue' && strtoupper((string)($d['review_acceptance_status'] ?? 'NOT_SENT')) === 'DECLINED'; ?>
+                <?php $canForwardFileActions = $canOwnFileActions || $isAcceptedSharedHolder || $isAcceptedReviewerHolder; ?>
+                <?php $isClosedRoute = strtoupper((string)($d['route_outcome'] ?? 'ACTIVE')) !== 'ACTIVE' || in_array($cardRoutingStatus, ['APPROVED', 'REJECTED'], true); ?>
+                <?php $canReplaceFile = !$isClosedRoute && !$hasOutgoingSharedLink && !$canManageTrash && $canOwnFileActions; ?>
+                <?php $isCardShareLocked = match ($cardRoutingStatus) {
+                  'APPROVED', 'REJECTED' => true,
+                  'PENDING_SHARE_ACCEPTANCE', 'PENDING_REVIEW_ACCEPTANCE' => true,
+                  'SHARE_ACCEPTED' => !$isAcceptedSharedHolder,
+                  'IN_REVIEW' => !$isAcceptedReviewerHolder,
+                  default => $hasOutgoingSharedLink,
+                } || $isClosedRoute; ?>
                 <?php $canCancelShare = !$canManageTrash && ($canOwnFileActions || $hasOutgoingSharedLink) && $hasOutgoingSharedLink; ?>
-                <?php $cardPreview = ['kind' => 'icon']; ?>
                 <article class="drive-file-card drive-file-card--list js-selectable-card" data-selectable-id="<?= (int)$d['id'] ?>">
                   <div class="drive-file-card__head">
                     <div class="drive-card-actions">
@@ -733,14 +847,36 @@ foreach (($docs ?? []) as $navDoc) {
                           <?= e(workflow_badge_label((string)($d['routing_status'] ?? 'AVAILABLE'), (string)($d['status'] ?? 'Draft'))) ?>
                         </span>
                       <?php endif; ?>
-                      <?php if($tab !== 'division_queue'): ?>
-                        <div class="dropdown">
-                          <button class="btn btn-sm btn-light folder-menu-trigger" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="File options">
-                            <i class="bi bi-three-dots-vertical"></i>
-                          </button>
-                          <div class="dropdown-menu dropdown-menu-end folder-menu">
-                            <a class="dropdown-item" href="<?= BASE_URL ?>/documents/view?id=<?= (int)$d['id'] ?><?= $isAdmin ? '&user_id='.(int)$targetUserId : '' ?>"><i class="bi bi-box-arrow-up-right me-2"></i>Open</a>
-                            <?php if(!$canManageTrash && $canOwnFileActions && !$isCardShareLocked): ?>
+                      <div class="dropdown">
+                        <button class="btn btn-sm btn-light folder-menu-trigger" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="File options">
+                          <i class="bi bi-three-dots-vertical"></i>
+                        </button>
+                        <div class="dropdown-menu dropdown-menu-end folder-menu">
+                          <a class="dropdown-item" href="<?= BASE_URL ?>/documents/view?id=<?= (int)$d['id'] ?><?= $isAdmin ? '&user_id='.(int)$targetUserId : '' ?>"><i class="bi bi-box-arrow-up-right me-2"></i>Open</a>
+                          <?php if($isPendingSharedHolder || $isDeclinedSharedHolder): ?>
+                            <form method="POST" action="<?= BASE_URL ?>/documents/share/respond">
+                              <?= csrf_field() ?>
+                              <input type="hidden" name="document_id" value="<?= (int)$d['id'] ?>">
+                              <input type="hidden" name="decision" value="ACCEPT">
+                              <button class="dropdown-item text-success" type="submit"><i class="bi bi-check2-circle me-2"></i><?= $isDeclinedSharedHolder ? 'Accept now' : 'Accept file' ?></button>
+                            </form>
+                          <?php endif; ?>
+                          <?php if($isPendingReviewHolder || $isDeclinedReviewHolder): ?>
+                            <form method="POST" action="<?= BASE_URL ?>/documents/review/accept">
+                              <?= csrf_field() ?>
+                              <input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
+                              <button class="dropdown-item text-success" type="submit"><i class="bi bi-check2-circle me-2"></i><?= $isDeclinedReviewHolder ? 'Accept review now' : 'Accept review' ?></button>
+                            </form>
+                          <?php endif; ?>
+                          <?php if($isAcceptedSharedChiefHolder): ?>
+                            <form method="POST" action="<?= BASE_URL ?>/documents/review/decision">
+                              <?= csrf_field() ?>
+                              <input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
+                              <input type="hidden" name="decision" value="APPROVED">
+                              <button class="dropdown-item text-success" type="submit"><i class="bi bi-patch-check me-2"></i>Approve</button>
+                            </form>
+                          <?php endif; ?>
+                          <?php if(!$canManageTrash && $canForwardFileActions && !$isCardShareLocked): ?>
                               <button
                                 class="dropdown-item"
                                 type="button"
@@ -751,8 +887,8 @@ foreach (($docs ?? []) as $navDoc) {
                                 data-share-routing="<?= e(routing_status_label((string)($d['routing_status'] ?? 'AVAILABLE'))) ?>"
                                 data-share-locked="<?= $isCardShareLocked ? '1' : '0' ?>"
                               ><i class="bi bi-send me-2"></i>Share</button>
-                            <?php endif; ?>
-                            <?php if($canCancelShare): ?>
+                          <?php endif; ?>
+                          <?php if($canCancelShare): ?>
                               <button
                                 class="dropdown-item text-warning js-cancel-share"
                                 type="button"
@@ -760,8 +896,8 @@ foreach (($docs ?? []) as $navDoc) {
                                 data-action="<?= BASE_URL ?>/documents/revoke"
                                 data-confirm-message="Cancel this current share and return the file to the owner?"
                               ><i class="bi bi-arrow-counterclockwise me-2"></i>Cancel share</button>
-                            <?php endif; ?>
-                            <?php if(!$canManageTrash && $canOwnFileActions): ?>
+                          <?php endif; ?>
+                          <?php if($canReplaceFile): ?>
                               <button
                                 class="dropdown-item"
                                 type="button"
@@ -778,27 +914,27 @@ foreach (($docs ?? []) as $navDoc) {
                               data-replace-tags="<?= e((string)($d['tags'] ?? '')) ?>"
                               data-replace-location="<?= e((string)($d['current_location'] ?? '')) ?>"
                               ><i class="bi bi-arrow-repeat me-2"></i>Replace file</button>
-                            <?php endif; ?>
-                            <button
-                              class="dropdown-item"
-                              type="button"
-                              data-bs-toggle="modal"
-                              data-bs-target="#workspaceFileDetailsModal"
-                              data-file-title="<?= e((string)($d['title'] ?? $d['name'])) ?>"
-                              data-file-code="<?= e((string)($d['document_code'] ?? 'Uncoded')) ?>"
-                              data-file-direction="<?= e(document_direction_label((string)($d['document_type'] ?? 'INCOMING'))) ?>"
-                              data-file-location="<?= e((string)($d['current_location'] ?? 'Unspecified location')) ?>"
-                              data-file-routing="<?= e(routing_status_label((string)($d['routing_status'] ?? 'NOT_ROUTED'))) ?>"
-                              data-file-priority="<?= e(priority_level_label((string)($d['priority_level'] ?? 'NORMAL'))) ?>"
-                              data-file-category="<?= e(document_category_label((string)($d['category'] ?? ''))) ?>"
-                              data-file-owner="<?= e((string)($d['owner_name'] ?? $selectedOwnerLabel)) ?>"
-                              data-file-storage="Routed"
-                              data-file-signatory="<?= e((string)($d['signatory'] ?? 'Not set')) ?>"
-                              data-file-activity="<?= $canManageTrash ? e('Deleted ' . trash_timestamp_label((string)($d['deleted_at'] ?? null))) : e(workspace_activity_label((string)($d['last_activity_at'] ?? $d['created_at'] ?? ''))) ?>"
-                              data-file-tags="<?= e(trim((string)($d['tags'] ?? '')) !== '' ? (string)$d['tags'] : 'No tags') ?>"
-                            ><i class="bi bi-info-circle me-2"></i>Details</button>
-                            <a class="dropdown-item" href="<?= BASE_URL ?>/documents/download?id=<?= (int)$d['id'] ?>"><i class="bi bi-download me-2"></i>Download</a>
-                            <?php if($canManageTrash): ?>
+                          <?php endif; ?>
+                          <button
+                            class="dropdown-item"
+                            type="button"
+                            data-bs-toggle="modal"
+                            data-bs-target="#workspaceFileDetailsModal"
+                            data-file-title="<?= e((string)($d['title'] ?? $d['name'])) ?>"
+                            data-file-code="<?= e((string)($d['document_code'] ?? 'Uncoded')) ?>"
+                            data-file-direction="<?= e(document_direction_label((string)($d['document_type'] ?? 'INCOMING'))) ?>"
+                            data-file-location="<?= e((string)($d['current_location'] ?? 'Unspecified location')) ?>"
+                            data-file-routing="<?= e(routing_status_label((string)($d['routing_status'] ?? 'NOT_ROUTED'))) ?>"
+                            data-file-priority="<?= e(priority_level_label((string)($d['priority_level'] ?? 'NORMAL'))) ?>"
+                            data-file-category="<?= e(document_category_label((string)($d['category'] ?? ''))) ?>"
+                            data-file-owner="<?= e((string)($d['owner_name'] ?? $selectedOwnerLabel)) ?>"
+                            data-file-storage="Routed"
+                            data-file-signatory="<?= e((string)($d['signatory'] ?? 'Not set')) ?>"
+                            data-file-activity="<?= $canManageTrash ? e('Deleted ' . trash_timestamp_label((string)($d['deleted_at'] ?? null))) : e(workspace_activity_label((string)($d['last_activity_at'] ?? $d['created_at'] ?? ''))) ?>"
+                            data-file-tags="<?= e(trim((string)($d['tags'] ?? '')) !== '' ? (string)$d['tags'] : 'No tags') ?>"
+                          ><i class="bi bi-info-circle me-2"></i>Details</button>
+                          <a class="dropdown-item" href="<?= BASE_URL ?>/documents/download?id=<?= (int)$d['id'] ?>"><i class="bi bi-download me-2"></i>Download</a>
+                          <?php if($canManageTrash): ?>
                               <form method="POST" action="<?= BASE_URL ?>/documents/restore<?= $isAdmin ? '?user_id='.(int)$targetUserId : '' ?>">
                                 <?= csrf_field() ?>
                                 <input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
@@ -817,7 +953,7 @@ foreach (($docs ?? []) as $navDoc) {
                                 <input type="hidden" name="document_ids[]" value="<?= (int)$d['id'] ?>">
                                 <button class="dropdown-item text-danger" type="submit"><i class="bi bi-trash3 me-2"></i>Delete permanently</button>
                               </form>
-                            <?php elseif($canOwnFileActions): ?>
+                          <?php elseif($canOwnFileActions): ?>
                               <button
                                 class="dropdown-item text-danger js-delete-document"
                                 type="button"
@@ -825,10 +961,9 @@ foreach (($docs ?? []) as $navDoc) {
                                 data-action="<?= BASE_URL ?>/documents/delete<?= $isAdmin ? '?user_id='.(int)$targetUserId : '' ?>"
                                 data-confirm-message="Move this file to trash?"
                               ><i class="bi bi-trash3 me-2"></i>Move to trash</button>
-                            <?php endif; ?>
-                          </div>
+                          <?php endif; ?>
                         </div>
-                      <?php endif; ?>
+                      </div>
                     </div>
                   </div>
                   <div class="drive-file-card__preview">
@@ -878,6 +1013,9 @@ foreach (($docs ?? []) as $navDoc) {
                         Route tracked below
                       </div>
                     <?php endif; ?>
+                    <div class="drive-file__meta">
+                      <?= e(route_lifecycle_label($d)) ?>
+                    </div>
                     <div class="drive-file-card__meta-row">
                       <span><?= $canManageTrash ? 'Deleted ' . e(trash_timestamp_label((string)($d['deleted_at'] ?? null))) : e(workspace_activity_label((string)($d['last_activity_at'] ?? $d['created_at'] ?? ''))) ?></span>
                       <a class="btn btn-sm btn-light" href="<?= BASE_URL ?>/documents/view?id=<?= (int)$d['id'] ?><?= $isAdmin ? '&user_id='.(int)$targetUserId : '' ?>"><?= !$sharedAccepted ? 'Respond' : ($canManageTrash || $tab === 'division_queue' ? 'Review' : 'Open') ?></a>
@@ -911,7 +1049,7 @@ foreach (($docs ?? []) as $navDoc) {
                           <span class="shared-route-item__file"><?= e((string)($d['name'] ?? 'Untitled file')) ?></span>
                           <span class="shared-route-item__status"><?= e(routing_status_label((string)($d['routing_status'] ?? 'AVAILABLE'))) ?></span>
                         </span>
-                        <span class="shared-route-item__summary-route"><?= e($routeFrom) ?> → <?= e($routeTo) ?></span>
+                        <span class="shared-route-item__summary-route"><?= e($routeFrom) ?> → <?= e($routeTo) ?> · <?= e(route_lifecycle_label($d)) ?></span>
                       </summary>
                       <div class="shared-route-item__body">
                         <div class="shared-route-item__grid">

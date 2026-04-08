@@ -13,7 +13,11 @@ require_once __DIR__ . "/../models/AuditLog.php";
 require_once __DIR__ . "/../models/Notification.php";
 require_once __DIR__ . "/../models/DocumentMessage.php";
 require_once __DIR__ . "/../services/DocumentService.php";
+require_once __DIR__ . "/../services/DocumentShareService.php";
 require_once __DIR__ . "/../services/AccessService.php";
+require_once __DIR__ . "/DocumentFolderController.php";
+require_once __DIR__ . "/DocumentShareController.php";
+require_once __DIR__ . "/DocumentReviewController.php";
 
 function current_role(): string {
   return strtoupper((string)($_SESSION['user']['role'] ?? 'EMPLOYEE'));
@@ -186,12 +190,42 @@ function can_manage_document(array $doc, int $uid): bool {
   return is_admin_user() || (int)$doc['owner_id'] === $uid;
 }
 
+function can_forward_document(array $doc, int $uid): bool {
+  $level = AccessService::level($GLOBALS['pdo'], (int)($doc['id'] ?? 0), $uid);
+  return in_array($level, ['admin', 'owner', 'editor', 'viewer', 'division_chief'], true);
+}
+
+function document_share_locked_for_user(array $doc, int $uid): bool {
+  $level = AccessService::level($GLOBALS['pdo'], (int)($doc['id'] ?? 0), $uid);
+  $routingStatus = strtoupper((string)($doc['routing_status'] ?? 'AVAILABLE'));
+  $routeOutcome = strtoupper((string)($doc['route_outcome'] ?? 'ACTIVE'));
+  if ($routeOutcome !== 'ACTIVE' || in_array($routingStatus, ['APPROVED', 'REJECTED'], true)) {
+    return true;
+  }
+
+  return match ($routingStatus) {
+    'PENDING_SHARE_ACCEPTANCE', 'PENDING_REVIEW_ACCEPTANCE' => true,
+    'SHARE_ACCEPTED' => !in_array($level, ['admin', 'editor', 'viewer'], true),
+    'IN_REVIEW' => !in_array($level, ['admin', 'division_chief'], true),
+    default => false,
+  };
+}
+
+function document_is_finalized(array $doc): bool {
+  $routeOutcome = strtoupper((string)($doc['route_outcome'] ?? 'ACTIVE'));
+  $routingStatus = strtoupper((string)($doc['routing_status'] ?? 'AVAILABLE'));
+  return $routeOutcome !== 'ACTIVE' || in_array($routingStatus, ['APPROVED', 'REJECTED'], true);
+}
+
 function can_mutate_document(array $doc, int $uid): bool {
   if (!can_manage_document($doc, $uid)) {
     return false;
   }
   if (is_admin_user()) {
     return true;
+  }
+  if (document_is_finalized($doc)) {
+    return false;
   }
   return !is_approval_locked($doc);
 }
@@ -210,7 +244,16 @@ function can_review_document(array $doc, int $uid): bool {
     return true;
   }
   $level = AccessService::level($GLOBALS['pdo'], (int)($doc['id'] ?? 0), $uid);
-  return in_array($level, ['division_chief', 'division_chief_pending', 'division_chief_declined'], true);
+  if (in_array($level, ['division_chief', 'division_chief_pending', 'division_chief_declined'], true)) {
+    return true;
+  }
+
+  if (current_role() !== 'DIVISION_CHIEF') {
+    return false;
+  }
+
+  $permissionRow = Permission::findRowForUser($GLOBALS['pdo'], (int)($doc['id'] ?? 0), $uid);
+  return !empty($permissionRow['accepted_at']);
 }
 
 function folder_path_join(string ...$segments): string {
@@ -319,10 +362,7 @@ function purge_trash_items(PDO $pdo, int $ownerId, array $folderIds, array $docu
   }
 
   foreach ($filePaths as $path) {
-    $abs = DocumentService::absolutePathFromVersion($path);
-    if (is_file($abs)) {
-      @unlink($abs);
-    }
+    StorageService::delete($pdo, $path);
   }
 
   return $deletedCount;
@@ -863,6 +903,16 @@ function upload(): void {
     uploaded_entries_from_request($_FILES['file'] ?? null, $_POST['file_relative_paths'] ?? $_POST['relative_paths'] ?? []),
     uploaded_entries_from_request($_FILES['folder_upload'] ?? null, $_POST['file_relative_paths'] ?? $_POST['relative_paths'] ?? [])
   );
+  if (request_exceeds_post_max_size()) {
+    redirect($routedRedirectBase . '&err=upload_post_max_exceeded' . $contextSuffix);
+  }
+  $uploadError = upload_request_error_code($_FILES['file'] ?? null);
+  if ($uploadError === null) {
+    $uploadError = upload_request_error_code($_FILES['folder_upload'] ?? null);
+  }
+  if ($uploadError !== null) {
+    redirect($routedRedirectBase . '&err=' . upload_error_message_key($uploadError) . $contextSuffix);
+  }
   if (empty($uploadedEntries)) {
     redirect($routedRedirectBase . '&err=upload_failed' . $contextSuffix);
   }
@@ -897,27 +947,37 @@ function upload(): void {
       if (($trackingError = document_tracking_required_error($tracking)) !== null) {
         redirect($routedRedirectBase . '&err=' . $trackingError . $contextSuffix);
       }
-      $docId = DocumentService::upload(
-        $pdo,
-        $entry['file'],
-        $ownerId,
-        $entryFolderId,
-        $uid,
-        $storageArea,
-        $divisionId > 0 ? $divisionId : null,
-        $tracking
-      );
-      DocumentRoute::add(
-        $pdo,
-        $docId,
-        null,
-        (string)$tracking['current_location'],
-        (string)$tracking['routing_status'],
-        document_route_note('upload', $tracking, $entryName),
-        $uid
-      );
+      $pdo->beginTransaction();
+      try {
+        $docId = DocumentService::upload(
+          $pdo,
+          $entry['file'],
+          $ownerId,
+          $entryFolderId,
+          $uid,
+          $storageArea,
+          $divisionId > 0 ? $divisionId : null,
+          $tracking
+        );
+        DocumentRoute::add(
+          $pdo,
+          $docId,
+          null,
+          (string)$tracking['current_location'],
+          (string)$tracking['routing_status'],
+          document_route_note('upload', $tracking, $entryName),
+          $uid
+        );
+        $pdo->commit();
+      } catch (Throwable $entryError) {
+        if ($pdo->inTransaction()) {
+          $pdo->rollBack();
+        }
+        throw $entryError;
+      }
     }
   } catch (Throwable $e) {
+    upload_debug_log($e);
     redirect($routedRedirectBase . '&err=upload_failed' . $contextSuffix);
   }
 
@@ -962,6 +1022,75 @@ function uploaded_entries_from_request(?array $fileBag, array $relativeOverrides
   }
 
   return $entries;
+}
+
+function upload_request_error_code(?array $fileBag): ?int {
+  if (!$fileBag || !isset($fileBag['error'])) {
+    return null;
+  }
+
+  $errors = $fileBag['error'];
+  if (!is_array($errors)) {
+    $code = (int)$errors;
+    return $code === UPLOAD_ERR_OK || $code === UPLOAD_ERR_NO_FILE ? null : $code;
+  }
+
+  foreach ($errors as $error) {
+    $code = (int)$error;
+    if ($code !== UPLOAD_ERR_OK && $code !== UPLOAD_ERR_NO_FILE) {
+      return $code;
+    }
+  }
+
+  return null;
+}
+
+function upload_error_message_key(int $errorCode): string {
+  return match ($errorCode) {
+    UPLOAD_ERR_INI_SIZE => 'upload_ini_size_exceeded',
+    UPLOAD_ERR_FORM_SIZE => 'upload_form_size_exceeded',
+    UPLOAD_ERR_PARTIAL => 'upload_partial',
+    UPLOAD_ERR_NO_TMP_DIR => 'upload_no_tmp_dir',
+    UPLOAD_ERR_CANT_WRITE => 'upload_cant_write',
+    UPLOAD_ERR_EXTENSION => 'upload_blocked_by_extension',
+    default => 'upload_failed',
+  };
+}
+
+function upload_debug_log(Throwable $e): void {
+  $logPath = dirname(STORAGE_DIR) . DIRECTORY_SEPARATOR . 'upload-errors.log';
+  $line = '[' . date('Y-m-d H:i:s') . '] '
+    . get_class($e) . ': ' . $e->getMessage()
+    . ' in ' . $e->getFile() . ':' . $e->getLine()
+    . PHP_EOL;
+  @file_put_contents($logPath, $line, FILE_APPEND);
+}
+
+function request_exceeds_post_max_size(): bool {
+  $contentLength = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
+  if ($contentLength <= 0) {
+    return false;
+  }
+
+  $postMax = ini_get('post_max_size');
+  $postMaxBytes = ini_size_to_bytes($postMax);
+  return $postMaxBytes > 0 && $contentLength > $postMaxBytes;
+}
+
+function ini_size_to_bytes(string|false $value): int {
+  $raw = trim((string)$value);
+  if ($raw === '') {
+    return 0;
+  }
+
+  $number = (float)$raw;
+  $unit = strtolower(substr($raw, -1));
+  return match ($unit) {
+    'g' => (int)($number * 1024 * 1024 * 1024),
+    'm' => (int)($number * 1024 * 1024),
+    'k' => (int)($number * 1024),
+    default => (int)$number,
+  };
 }
 
 function document_preview_mime(string $filename, string $absPath): string {
@@ -1283,12 +1412,14 @@ function document_text_preview(string $absPath): ?string {
 }
 
 function document_preview_payload(array $doc, ?array $latest): array {
+  global $pdo;
+
   if (!$latest) {
     return ['kind' => 'none', 'message' => 'No preview available.'];
   }
 
-  $abs = DocumentService::absolutePathFromVersion((string)$latest['file_path']);
-  if (!is_file($abs)) {
+  $filePath = (string)$latest['file_path'];
+  if (!StorageService::exists($pdo, $filePath)) {
     return ['kind' => 'none', 'message' => 'Preview unavailable because the file is missing.'];
   }
 
@@ -1306,14 +1437,15 @@ function document_preview_payload(array $doc, ?array $latest): array {
     return ['kind' => 'image', 'url' => $fileUrl];
   }
   if (in_array($ext, ['txt', 'md', 'csv', 'json', 'xml', 'html', 'css', 'js', 'ts', 'php'], true)) {
-    return ['kind' => 'text', 'text' => document_text_preview($abs)];
+    $text = StorageService::withReadablePath($pdo, $filePath, static fn(string $path): ?string => document_text_preview($path));
+    return ['kind' => 'text', 'text' => $text];
   }
   if ($ext === 'docx') {
-    $html = document_docx_html_preview($abs);
+    $html = StorageService::withReadablePath($pdo, $filePath, static fn(string $path): ?string => document_docx_html_preview($path));
     if ($html !== null) {
       return ['kind' => 'docx-html', 'html' => $html];
     }
-    $text = document_docx_text_preview($abs);
+    $text = StorageService::withReadablePath($pdo, $filePath, static fn(string $path): ?string => document_docx_text_preview($path));
     if ($text !== null) {
       return ['kind' => 'docx-text', 'text' => $text];
     }
@@ -1356,7 +1488,7 @@ function view_doc(): void {
     'level' => $level,
     'canViewFile' => $canViewFile,
     'shared' => $shared,
-    'shareRecipients' => User::listShareRecipients($pdo, (int)($doc['owner_id'] ?? 0), (int)($doc['division_id'] ?? 0)),
+    'shareRecipients' => User::listShareRecipients($pdo, $uid, (int)($doc['division_id'] ?? 0)),
     'latest' => $latest,
     'preview' => $preview,
     'reviews' => $reviews,
@@ -1382,14 +1514,18 @@ function serve_doc_file(): void {
     die("Not found");
   }
 
-  $abs = DocumentService::absolutePathFromVersion($version['file_path']);
-  if (!is_file($abs)) {
+  $filePath = (string)$version['file_path'];
+  if (!StorageService::exists($pdo, $filePath)) {
     http_response_code(404);
     die("File missing");
   }
 
-  $mime = document_preview_mime((string)$doc['name'], $abs);
-  $size = (int)(filesize($abs) ?: 0);
+  $mime = StorageService::withReadablePath(
+    $pdo,
+    $filePath,
+    static fn(string $path): string => document_preview_mime((string)$doc['name'], $path)
+  ) ?? 'application/octet-stream';
+  $size = StorageService::size($pdo, $filePath);
   $start = 0;
   $end = max(0, $size - 1);
 
@@ -1423,29 +1559,10 @@ function serve_doc_file(): void {
     header('Content-Length: ' . $size);
   }
 
-  $handle = fopen($abs, 'rb');
-  if ($handle === false) {
+  if (!StorageService::output($pdo, $filePath, $start, $end)) {
     http_response_code(500);
     exit;
   }
-
-  if ($start > 0) {
-    fseek($handle, $start);
-  }
-
-  $remaining = ($end - $start) + 1;
-  while ($remaining > 0 && !feof($handle)) {
-    $chunkSize = min(8192, $remaining);
-    $buffer = fread($handle, $chunkSize);
-    if ($buffer === false) {
-      break;
-    }
-    echo $buffer;
-    flush();
-    $remaining -= strlen($buffer);
-  }
-
-  fclose($handle);
   exit;
 }
 
@@ -1462,14 +1579,14 @@ function download_doc(): void {
   $v = $versionId ? Version::get($pdo, $versionId) : Version::latest($pdo, $docId);
   if (!$v || (int)$v['document_id'] !== $docId) { http_response_code(404); die("Version not found"); }
 
-  $abs = DocumentService::absolutePathFromVersion($v['file_path']);
-  if (!is_file($abs)) { http_response_code(404); die("File missing"); }
+  $filePath = (string)$v['file_path'];
+  if (!StorageService::exists($pdo, $filePath)) { http_response_code(404); die("File missing"); }
 
   AuditLog::add($pdo, $uid, "Downloaded document", $docId, "version=".$v['version_number']);
   header('Content-Type: application/octet-stream');
   header('Content-Disposition: attachment; filename="'.basename($doc['name']).'"');
-  header('Content-Length: ' . filesize($abs));
-  readfile($abs);
+  header('Content-Length: ' . StorageService::size($pdo, $filePath));
+  StorageService::output($pdo, $filePath);
   exit;
 }
 
@@ -1482,6 +1599,9 @@ function replace_file(): void {
   AccessService::requireEdit($pdo, $docId, $uid);
   $doc = Document::get($pdo, $docId);
   if (!$doc) { redirect('/documents?err=not_found'); }
+  if (document_is_finalized($doc)) {
+    redirect('/documents/view?id='.$docId.'&err=decision_already_final&user_id='.(int)$doc['owner_id']);
+  }
   if (is_approval_locked($doc) && !is_admin_user()) {
     redirect('/documents/view?id='.$docId.'&err=approval_locked&user_id='.(int)$doc['owner_id']);
   }
@@ -1768,6 +1888,15 @@ function route_document(): void {
   $nextStatus = Document::normalizeRoutingStatus(req_str('routing_status', (string)($doc['routing_status'] ?? 'NOT_ROUTED')));
   $note = trim(req_str('route_note', ''));
   Document::updateTrackingState($pdo, $docId, $nextLocation, $nextStatus);
+  if ($nextStatus === 'APPROVED') {
+    Document::closeRoute($pdo, $docId, 'APPROVED');
+  } elseif (in_array($nextStatus, ['SHARE_DECLINED', 'REVIEW_ASSIGNMENT_DECLINED'], true)) {
+    Document::closeRoute($pdo, $docId, 'RETURNED');
+  } elseif ($nextStatus === 'REJECTED') {
+    Document::closeRoute($pdo, $docId, 'REJECTED');
+  } else {
+    Document::markRouteActive($pdo, $docId);
+  }
   DocumentRoute::add(
     $pdo,
     $docId,
@@ -1812,100 +1941,6 @@ function send_document_message(): void {
   redirect('/documents/view?id='.$docId.'&msg=message_sent&user_id='.(int)$doc['owner_id']);
 }
 
-function submit_document_for_review(): void {
-  global $pdo;
-  csrf_verify();
-
-  $uid = (int)($_SESSION['user']['id'] ?? 0);
-  $docId = req_int('id', 0);
-  $doc = Document::get($pdo, $docId);
-  if (!$doc) {
-    redirect('/documents?err=not_found');
-  }
-  if (!can_manage_document($doc, $uid)) {
-    http_response_code(403);
-    die("403 owner only");
-  }
-  if (!can_submit_document_for_review($doc)) {
-    $err = is_approval_locked($doc) ? 'approval_locked' : 'decision_already_final';
-    redirect('/documents/view?id='.$docId.'&err='.$err.'&user_id='.(int)$doc['owner_id']);
-  }
-  $divisionId = (int)($doc['division_id'] ?? 0);
-  if ($divisionId <= 0) {
-    redirect('/documents/view?id='.$docId.'&err=division_required');
-  }
-  $division = Division::find($pdo, $divisionId);
-  if (!$division || (int)($division['chief_user_id'] ?? 0) <= 0) {
-    redirect('/documents/view?id='.$docId.'&err=division_chief_required');
-  }
-
-  Document::submitForReview($pdo, $docId, $divisionId);
-  Document::updateTrackingState($pdo, $docId, 'Section Chief Review Queue', 'PENDING_REVIEW_ACCEPTANCE');
-  DocumentRoute::add(
-    $pdo,
-    $docId,
-    (string)($doc['current_location'] ?? ''),
-    'Section Chief Review Queue',
-    'PENDING_REVIEW_ACCEPTANCE',
-    document_route_note('submit', $doc, (string)($doc['name'] ?? '')),
-    $uid
-  );
-  Notification::add($pdo, (int)$division['chief_user_id'], "Routed file awaiting review", (string)$doc['name'], "/documents/view?id=".$docId);
-  AuditLog::add($pdo, $uid, "Submitted routed file for review", $docId, "division_id=".$divisionId);
-  redirect('/documents/view?id='.$docId.'&msg=submitted_for_review');
-}
-
-function review_document_decision(): void {
-  global $pdo;
-  csrf_verify();
-
-  $uid = (int)($_SESSION['user']['id'] ?? 0);
-  $docId = req_int('id', 0);
-  $decision = strtoupper(req_str('decision', ''));
-  $doc = Document::get($pdo, $docId);
-  if (!$doc) { redirect('/documents?err=not_found'); }
-  if (!can_review_document($doc, $uid)) { http_response_code(403); die("403 reviewer only"); }
-  if (!in_array($decision, ['APPROVED', 'REJECTED'], true)) {
-    redirect('/documents/view?id='.$docId.'&err=decision_invalid');
-  }
-  if ((string)($doc['status'] ?? 'Draft') !== 'To be reviewed') {
-    redirect('/documents/view?id='.$docId.'&err=decision_already_final');
-  }
-  if (strtoupper((string)($doc['review_acceptance_status'] ?? 'NOT_SENT')) !== 'ACCEPTED') {
-    redirect('/documents/view?id='.$docId.'&err=review_acceptance_required');
-  }
-
-  $note = trim(req_str('reject_note', ''));
-  if ($decision === 'REJECTED' && $note === '') {
-    redirect('/documents/view?id='.$docId.'&err=reject_note_required');
-  }
-  $storedNote = $note !== '' ? mb_substr($note, 0, 1000) : null;
-
-  Document::finalizeReview($pdo, $docId, $decision, $storedNote, $uid);
-  $nextLocation = $decision === 'APPROVED' ? 'Approved Routed Files' : 'Returned to Owner';
-  $nextRouteStatus = $decision === 'APPROVED' ? 'APPROVED' : 'REJECTED';
-  Document::updateTrackingState($pdo, $docId, $nextLocation, $nextRouteStatus);
-  DocumentRoute::add(
-    $pdo,
-    $docId,
-    (string)($doc['current_location'] ?? 'Section Chief Review Queue'),
-    $nextLocation,
-    $nextRouteStatus,
-    $storedNote ?: document_route_note($decision === 'APPROVED' ? 'approve' : 'reject', $doc, (string)($doc['name'] ?? '')),
-    $uid
-  );
-  DocumentReview::add($pdo, $docId, $uid, $decision, $storedNote);
-  Notification::add(
-    $pdo,
-    (int)$doc['owner_id'],
-    $decision === 'APPROVED' ? "Routed file approved" : "Routed file rejected",
-    $storedNote ?: (string)$doc['name'],
-    "/documents/view?id=".$docId
-  );
-  AuditLog::add($pdo, $uid, $decision === 'APPROVED' ? "Approved routed file" : "Rejected routed file", $docId, $storedNote);
-  redirect('/documents/view?id='.$docId.'&msg=' . ($decision === 'APPROVED' ? 'document_approved' : 'document_rejected'));
-}
-
 function bulk_action(): void {
   global $pdo;
   csrf_verify();
@@ -1932,360 +1967,6 @@ function bulk_action(): void {
   redirect('/documents?tab=' . ($action === 'restore' ? 'trash&msg=restored' : 'routed&msg=deleted'));
 }
 
-function empty_trash(): void {
-  global $pdo;
-  csrf_verify();
-
-  $uid = (int)($_SESSION['user']['id'] ?? 0);
-  if (!require_reauth($pdo, $uid, req_str('confirm_password', ''))) {
-    redirect('/documents?tab=trash&err=reauth_failed');
-  }
-  $ownerId = selected_owner_id($pdo, $uid);
-  $trashedRoots = Folder::trashedRootFolders(Folder::listTrashedForUser($pdo, $ownerId));
-  $eligibleRootPaths = [];
-  foreach ($trashedRoots as $folder) {
-    $deletedAt = strtotime((string)($folder['deleted_at'] ?? ''));
-    if (TRASH_RETENTION_DAYS <= 0 || ($deletedAt !== false && $deletedAt <= strtotime('-' . TRASH_RETENTION_DAYS . ' days'))) {
-      $eligibleRootPaths[] = (string)$folder['name'];
-    }
-  }
-  $folderIds = Folder::idsInTreeForPaths($pdo, $ownerId, $eligibleRootPaths);
-  $docIds = Document::trashedIdsEligibleForPurge($pdo, $ownerId, TRASH_RETENTION_DAYS);
-  if (empty($docIds) && empty($folderIds)) {
-    redirect('/documents?tab=trash&msg=trash_already_empty&user_id='.$ownerId);
-  }
-
-  try {
-    purge_trash_items($pdo, $ownerId, $folderIds, $docIds);
-  } catch (Throwable $e) {
-    redirect('/documents?tab=trash&err=trash_empty_failed&user_id='.$ownerId);
-  }
-
-  AuditLog::add($pdo, $uid, "Emptied trash", null, "owner_id=".$ownerId);
-  redirect('/documents?tab=trash&msg=trash_emptied&user_id='.$ownerId);
-}
-
-function create_folder(): void {
-  global $pdo;
-  csrf_verify();
-  $uid = (int)$_SESSION['user']['id'];
-  $ownerId = selected_owner_id($pdo, $uid);
-  $name = req_str('name', '');
-  $parentFolderId = req_int('folder_id', 0);
-  $parentFolder = $parentFolderId ? Folder::getForUser($pdo, $parentFolderId, $ownerId, 'OFFICIAL') : null;
-  $fullName = folder_path_join($parentFolder ? (string)$parentFolder['name'] : '', $name);
-  if ($name !== '') {
-    Folder::firstOrCreateForUser($pdo, $ownerId, $fullName, 'OFFICIAL');
-    AuditLog::add($pdo, $uid, "Created folder", null, $fullName . ";owner_id=".$ownerId);
-  }
-  redirect('/documents?tab=routed' . ($parentFolderId > 0 ? '&folder=' . $parentFolderId : '') . '&user_id='.$ownerId);
-}
-
-function delete_folder(): void {
-  global $pdo;
-  csrf_verify();
-  $uid = (int)$_SESSION['user']['id'];
-  $ownerId = selected_owner_id($pdo, $uid);
-  $storageArea = Document::normalizeStorageArea(req_str('storage_area', 'PRIVATE'));
-  $folderId = request_folder_id();
-  $folder = Folder::getForUser($pdo, $folderId, $ownerId, $storageArea);
-  if (!$folder) {
-    redirect('/documents?tab=' . storage_area_tab($storageArea) . '&err=folder_not_found&user_id='.$ownerId);
-  }
-  if (folder_tree_locked_document_exists($pdo, $ownerId, (string)$folder['name'], $storageArea) && !is_admin_user()) {
-    redirect('/documents?tab=' . storage_area_tab($storageArea) . '&err=approval_locked&user_id='.$ownerId);
-  }
-
-  $tree = Folder::listTreeForUser($pdo, $ownerId, (string)$folder['name'], $storageArea);
-  $deletedDocs = 0;
-  foreach ($tree as $treeFolder) {
-    $deletedDocs += Document::softDeleteByFolder($pdo, $ownerId, (int)$treeFolder['id'], $uid, 'folder_deleted', $storageArea);
-  }
-  $deletedFolders = Folder::softDeleteTreeForUser($pdo, $ownerId, (string)$folder['name'], $uid, $storageArea);
-  AuditLog::add($pdo, $uid, "Deleted folder", null, "folder_id=".$folderId.", docs_trashed=".$deletedDocs.", folders_trashed=".$deletedFolders);
-  redirect('/documents?tab=' . storage_area_tab($storageArea) . '&msg=folder_deleted&user_id='.$ownerId);
-}
-
-function move_folder_to_official(): void {
-  redirect('/documents?tab=routed&msg=feature_retired');
-}
-
-function move_folder_to_private(): void {
-  redirect('/documents?tab=routed&msg=feature_retired');
-}
-
-function rename_folder(): void {
-  global $pdo;
-  csrf_verify();
-  $uid = (int)$_SESSION['user']['id'];
-  $ownerId = selected_owner_id($pdo, $uid);
-  $folderId = req_int('id', 0);
-  $newName = trim(req_str('new_name', ''));
-  $folder = Folder::getForUser($pdo, $folderId, $ownerId, 'OFFICIAL');
-  if (!$folder || $newName === '') {
-    redirect('/documents?tab=routed&err=folder_not_found&user_id='.$ownerId);
-  }
-  $parentPath = Folder::parentPath((string)$folder['name']);
-  $targetPath = folder_path_join($parentPath, mb_substr($newName, 0, 120));
-  Folder::renameTreeForUser($pdo, $ownerId, (string)$folder['name'], $targetPath, 'OFFICIAL');
-  AuditLog::add($pdo, $uid, "Renamed folder", null, "folder_id=".$folderId.", name=".$targetPath);
-  redirect('/documents?tab=routed&folder='.$folderId.'&msg=folder_renamed&user_id='.$ownerId);
-}
-
-function share_doc(): void {
-  global $pdo;
-  csrf_verify();
-
-  $uid = (int)$_SESSION['user']['id'];
-  $docId = req_int('document_id', 0);
-  $doc = Document::get($pdo, $docId);
-  if (!$doc) { redirect('/documents?err=not_found'); }
-  if (!can_manage_document($doc, $uid)) { http_response_code(403); die("403 owner only"); }
-  $targetUserId = req_int('target_user_id', 0);
-  $targetEmail = req_str('target_email', '');
-  $target = $targetUserId > 0 ? User::findById($pdo, $targetUserId) : User::findByEmail($pdo, $targetEmail);
-  if (!$target || !in_array(strtoupper((string)($target['role'] ?? '')), ['EMPLOYEE', 'DIVISION_CHIEF'], true)) {
-    redirect('/documents/view?id='.$docId.'&err=user_not_found');
-  }
-  if ((int)$target['id'] === $uid) { redirect('/documents/view?id='.$docId.'&err=cannot_share_self'); }
-  $docDivisionId = (int)($doc['division_id'] ?? 0);
-  if ($docDivisionId > 0 && (int)($target['division_id'] ?? 0) !== $docDivisionId) {
-    redirect('/documents/view?id='.$docId.'&err=user_not_found&user_id='.(int)$doc['owner_id']);
-  }
-  if (in_array(strtoupper((string)($doc['routing_status'] ?? 'AVAILABLE')), ['PENDING_SHARE_ACCEPTANCE', 'SHARE_ACCEPTED'], true)) {
-    redirect('/documents/view?id='.$docId.'&err=share_in_progress&user_id='.(int)$doc['owner_id']);
-  }
-
-  $perm = req_str('permission', 'viewer');
-  if (!in_array($perm, ['viewer', 'editor'], true)) $perm = 'viewer';
-  $division = (int)($target['division_id'] ?? 0) > 0 ? Division::find($pdo, (int)$target['division_id']) : null;
-  $resolvedTargetEmail = trim((string)($target['email'] ?? $targetEmail));
-
-  foreach (Permission::listForDoc($pdo, $docId) as $member) {
-    Permission::revoke($pdo, $docId, (int)($member['user_id'] ?? 0));
-  }
-  Permission::upsert($pdo, $docId, (int)$target['id'], $perm, $uid);
-  Document::updateTrackingState($pdo, $docId, 'Awaiting recipient acceptance', 'PENDING_SHARE_ACCEPTANCE');
-  DocumentRoute::add(
-    $pdo,
-    $docId,
-    (string)($doc['current_location'] ?? ''),
-    'Awaiting recipient acceptance',
-    'PENDING_SHARE_ACCEPTANCE',
-    document_share_route_note($target, $division),
-    $uid
-  );
-  AuditLog::add($pdo, $uid, "Shared document", $docId, "to=".$resolvedTargetEmail.", perm=".$perm);
-  Notification::add($pdo, (int)$target['id'], "A routed file was shared with you", "Permission: ".$perm, "/documents/view?id=".$docId);
-  redirect('/documents?tab=shared&msg=shared&user_id='.(int)$doc['owner_id']);
-}
-
-function share_folder(): void {
-  global $pdo;
-  csrf_verify();
-
-  $uid = (int)($_SESSION['user']['id'] ?? 0);
-  $folderId = req_int('folder_id', 0);
-  $ownerId = selected_owner_id($pdo, $uid);
-  $folder = Folder::getForUser($pdo, $folderId, $ownerId, 'OFFICIAL');
-  if (!$folder) {
-    redirect('/documents?tab=routed&err=folder_not_found' . documents_context_query_suffix(null, $ownerId));
-  }
-
-  $targetUserId = req_int('target_user_id', 0);
-  $target = $targetUserId > 0 ? User::findById($pdo, $targetUserId) : null;
-  if (!$target || !in_array(strtoupper((string)($target['role'] ?? '')), ['EMPLOYEE', 'DIVISION_CHIEF'], true)) {
-    redirect('/documents?tab=routed&folder=' . $folderId . '&err=user_not_found' . documents_context_query_suffix($folderId, $ownerId));
-  }
-  if ((int)$target['id'] === $uid) {
-    redirect('/documents?tab=routed&folder=' . $folderId . '&err=cannot_share_self' . documents_context_query_suffix($folderId, $ownerId));
-  }
-
-  $owner = User::findById($pdo, $ownerId);
-  $divisionId = (int)($owner['division_id'] ?? 0);
-  if ($divisionId > 0 && (int)($target['division_id'] ?? 0) !== $divisionId) {
-    redirect('/documents?tab=routed&folder=' . $folderId . '&err=user_not_found' . documents_context_query_suffix($folderId, $ownerId));
-  }
-
-  $tree = Folder::listTreeForUser($pdo, $ownerId, (string)$folder['name'], 'OFFICIAL');
-  $folderIds = array_values(array_filter(array_map(static fn(array $row): int => (int)($row['id'] ?? 0), $tree)));
-  if (empty($folderIds)) {
-    $folderIds = [$folderId];
-  }
-
-  $docs = array_values(array_filter(Document::listActiveForOwnerInStorage($pdo, $ownerId, 'OFFICIAL'), static function (array $doc) use ($folderIds): bool {
-    return in_array((int)($doc['folder_id'] ?? 0), $folderIds, true);
-  }));
-  if (empty($docs)) {
-    redirect('/documents?tab=routed&folder=' . $folderId . '&err=not_found' . documents_context_query_suffix($folderId, $ownerId));
-  }
-
-  foreach ($docs as $doc) {
-    if (!can_manage_document($doc, $uid)) {
-      http_response_code(403);
-      die("403 owner only");
-    }
-    if (in_array(strtoupper((string)($doc['routing_status'] ?? 'AVAILABLE')), ['PENDING_SHARE_ACCEPTANCE', 'SHARE_ACCEPTED', 'PENDING_REVIEW_ACCEPTANCE', 'IN_REVIEW'], true)) {
-      redirect('/documents?tab=routed&folder=' . $folderId . '&err=share_in_progress' . documents_context_query_suffix($folderId, $ownerId));
-    }
-  }
-
-  $perm = req_str('permission', 'viewer');
-  if (!in_array($perm, ['viewer', 'editor'], true)) $perm = 'viewer';
-  $division = (int)($target['division_id'] ?? 0) > 0 ? Division::find($pdo, (int)$target['division_id']) : null;
-
-  foreach ($docs as $doc) {
-    $docId = (int)($doc['id'] ?? 0);
-    foreach (Permission::listForDoc($pdo, $docId) as $member) {
-      Permission::revoke($pdo, $docId, (int)($member['user_id'] ?? 0));
-    }
-    Permission::upsert($pdo, $docId, (int)$target['id'], $perm, $uid);
-    Document::updateTrackingState($pdo, $docId, 'Awaiting recipient acceptance', 'PENDING_SHARE_ACCEPTANCE');
-    DocumentRoute::add(
-      $pdo,
-      $docId,
-      (string)($doc['current_location'] ?? ''),
-      'Awaiting recipient acceptance',
-      'PENDING_SHARE_ACCEPTANCE',
-      document_share_route_note($target, $division) . ' Folder: ' . Folder::basename((string)$folder['name']),
-      $uid
-    );
-  }
-
-  Notification::add($pdo, (int)$target['id'], "A routed folder was shared with you", Folder::basename((string)$folder['name']), "/documents?tab=shared");
-  AuditLog::add($pdo, $uid, "Shared folder", null, "folder_id=" . $folderId . ", to=" . (string)($target['email'] ?? '') . ", docs=" . count($docs));
-  redirect('/documents?tab=shared&msg=shared&user_id=' . $ownerId);
-}
-
-function respond_to_share(): void {
-  global $pdo;
-  csrf_verify();
-
-  $uid = (int)($_SESSION['user']['id'] ?? 0);
-  $docId = req_int('document_id', 0);
-  $decision = strtoupper(req_str('decision', ''));
-  $note = trim(req_str('response_note', ''));
-  $doc = Document::get($pdo, $docId);
-  if (!$doc) {
-    redirect('/documents?err=not_found');
-  }
-
-  $permissionRow = Permission::findRowForUser($pdo, $docId, $uid);
-  if (!$permissionRow) {
-    http_response_code(403);
-    die("403 share recipient only");
-  }
-
-  if ($decision === 'ACCEPT') {
-    Permission::accept($pdo, $docId, $uid);
-    Document::updateTrackingState($pdo, $docId, 'Shared with ' . (string)($_SESSION['user']['name'] ?? 'recipient'), 'SHARE_ACCEPTED');
-    DocumentRoute::add($pdo, $docId, 'Awaiting recipient acceptance', 'Shared with ' . (string)($_SESSION['user']['name'] ?? 'recipient'), 'SHARE_ACCEPTED', 'Recipient accepted the routed document.', $uid);
-    Notification::add($pdo, (int)$doc['owner_id'], "Shared document accepted", (string)($_SESSION['user']['email'] ?? ''), "/documents/view?id=".$docId);
-    AuditLog::add($pdo, $uid, "Accepted shared document", $docId, null);
-    redirect('/documents/view?id='.$docId.'&msg=share_accepted');
-  }
-
-  if ($note === '') {
-    redirect('/documents/view?id='.$docId.'&err=response_note_required');
-  }
-
-  Permission::decline($pdo, $docId, $uid, $note);
-  Document::updateTrackingState($pdo, $docId, 'Share declined by recipient', 'SHARE_DECLINED');
-  DocumentRoute::add($pdo, $docId, 'Awaiting recipient acceptance', 'Share declined by recipient', 'SHARE_DECLINED', $note, $uid);
-  Notification::add($pdo, (int)$doc['owner_id'], "Shared document not accepted", $note, "/documents/view?id=".$docId);
-  AuditLog::add($pdo, $uid, "Declined shared document", $docId, $note);
-  redirect('/documents?tab=shared&msg=share_declined');
-}
-
-function accept_review_assignment(): void {
-  global $pdo;
-  csrf_verify();
-
-  $uid = (int)($_SESSION['user']['id'] ?? 0);
-  $docId = req_int('id', 0);
-  $doc = Document::get($pdo, $docId);
-  if (!$doc) {
-    redirect('/documents?err=not_found');
-  }
-  if (!can_review_document($doc, $uid)) {
-    http_response_code(403);
-    die("403 reviewer only");
-  }
-
-  Document::acceptReviewAssignment($pdo, $docId);
-  Document::updateTrackingState($pdo, $docId, 'Section Chief Review Workspace', 'IN_REVIEW');
-  DocumentRoute::add($pdo, $docId, 'Section Chief Review Queue', 'Section Chief Review Workspace', 'IN_REVIEW', 'Section chief accepted the routed document for review.', $uid);
-  Notification::add($pdo, (int)$doc['owner_id'], "Section chief accepted your document", (string)($doc['title'] ?? $doc['name'] ?? ''), "/documents/view?id=".$docId);
-  AuditLog::add($pdo, $uid, "Accepted review assignment", $docId, null);
-  redirect('/documents/view?id='.$docId.'&msg=review_assignment_accepted');
-}
-
-function decline_review_assignment(): void {
-  global $pdo;
-  csrf_verify();
-
-  $uid = (int)($_SESSION['user']['id'] ?? 0);
-  $docId = req_int('id', 0);
-  $note = trim(req_str('response_note', ''));
-  $doc = Document::get($pdo, $docId);
-  if (!$doc) {
-    redirect('/documents?err=not_found');
-  }
-  if (!can_review_document($doc, $uid)) {
-    http_response_code(403);
-    die("403 reviewer only");
-  }
-  if ($note === '') {
-    redirect('/documents/view?id='.$docId.'&err=response_note_required');
-  }
-
-  Document::declineReviewAssignment($pdo, $docId, $note);
-  Document::updateTrackingState($pdo, $docId, 'Section chief review declined', 'REVIEW_ASSIGNMENT_DECLINED');
-  DocumentRoute::add($pdo, $docId, 'Section Chief Review Queue', 'Section chief review declined', 'REVIEW_ASSIGNMENT_DECLINED', $note, $uid);
-  Notification::add($pdo, (int)$doc['owner_id'], "Section chief did not accept the document yet", $note, "/documents/view?id=".$docId);
-  AuditLog::add($pdo, $uid, "Declined review assignment", $docId, $note);
-  redirect('/documents?tab=division_queue&msg=review_assignment_declined');
-}
-
-function revoke_share(): void {
-  global $pdo;
-  csrf_verify();
-
-  $uid = (int)$_SESSION['user']['id'];
-  $docId = req_int('document_id', 0);
-  $doc = Document::get($pdo, $docId);
-  if (!$doc) { redirect('/documents?err=not_found'); }
-  if (!can_manage_document($doc, $uid)) { http_response_code(403); die("403 owner only"); }
-
-  $shareMembers = Permission::listForDoc($pdo, $docId);
-  if (empty($shareMembers)) {
-    redirect('/documents?tab=shared&err=not_found&user_id='.(int)$doc['owner_id']);
-  }
-
-  foreach ($shareMembers as $member) {
-    $memberUserId = (int)($member['user_id'] ?? 0);
-    if ($memberUserId <= 0) {
-      continue;
-    }
-    Permission::revoke($pdo, $docId, $memberUserId);
-    Notification::add($pdo, $memberUserId, "Share cancelled by owner", (string)($doc['title'] ?? $doc['name'] ?? ''), "/documents?tab=shared");
-  }
-
-  $ownerName = (string)($_SESSION['user']['name'] ?? ($doc['owner_name'] ?? 'Owner'));
-  Document::updateTrackingState($pdo, $docId, $ownerName, 'AVAILABLE');
-  DocumentRoute::add(
-    $pdo,
-    $docId,
-    (string)($doc['current_location'] ?? 'Awaiting recipient acceptance'),
-    $ownerName,
-    'AVAILABLE',
-    'Share cancelled by owner and file returned to owner.',
-    $uid
-  );
-  AuditLog::add($pdo, $uid, "Cancelled share", $docId, "members=" . count($shareMembers));
-  redirect('/documents?tab=shared&msg=share_cancelled&user_id='.(int)$doc['owner_id']);
-}
-
 function require_reauth(PDO $pdo, int $userId, string $password): bool {
   if ($password === '') {
     return false;
@@ -2297,4 +1978,6 @@ function require_reauth(PDO $pdo, int $userId, string $password): bool {
 function is_approval_locked(array $doc): bool {
   return (int)($doc['approval_locked'] ?? 0) === 1;
 }
+
+
 

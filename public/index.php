@@ -2,8 +2,8 @@
 $ROOT = dirname(__DIR__); // C:\xampp\htdocs\wdms
 
 require $ROOT . "/app/config/app.php";
-wdms_bootstrap_session();
 require $ROOT . "/app/config/database.php";
+wdms_bootstrap_session();
 
 ini_set('display_errors', APP_DEBUG ? '1' : '0');
 ini_set('display_startup_errors', APP_DEBUG ? '1' : '0');
@@ -14,11 +14,126 @@ require $ROOT . "/app/helpers/redirect.php";
 require $ROOT . "/app/helpers/csrf.php";
 require $ROOT . "/app/helpers/http.php";
 
-$path = (string)parse_url((string)($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
-if (BASE_URL !== '' && str_starts_with($path, BASE_URL)) {
-  $path = substr($path, strlen(BASE_URL));
+function wdms_normalized_request_path(): string {
+  $path = (string)parse_url((string)($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
+  if (BASE_URL !== '' && str_starts_with($path, BASE_URL)) {
+    $path = substr($path, strlen(BASE_URL));
+  }
+  return $path === '' ? '/' : $path;
 }
-if ($path === '') $path = '/';
+
+function wdms_web_routes(): array {
+  return [
+    '/' => ['controller' => 'AuthController.php', 'handler' => 'login'],
+    '/login' => ['controller' => 'AuthController.php', 'handler' => 'login'],
+    '/notifications/read' => ['middleware' => ['require_login.php'], 'controller' => 'NotificationController.php', 'handler' => 'notifications_mark_read'],
+    '/notifications/clear' => ['middleware' => ['require_login.php'], 'controller' => 'NotificationController.php', 'handler' => 'notifications_clear_all'],
+    '/dashboard' => ['middleware' => ['require_login.php'], 'handler' => 'wdms_dashboard_redirect'],
+    '/account/password' => ['middleware' => ['require_login.php'], 'controller' => 'AccountController.php', 'handler' => 'account_password'],
+    '/account/onboarding/complete' => ['middleware' => ['require_login.php'], 'controller' => 'AccountController.php', 'handler' => 'account_complete_onboarding'],
+    '/media/file' => ['middleware' => ['require_login.php'], 'controller' => 'MediaController.php', 'handler' => 'serve_media_file'],
+    '/documents' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'documents'],
+    '/documents/upload' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'upload'],
+    '/documents/create' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'create_document'],
+    '/documents/view' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'view_doc'],
+    '/documents/replace' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'replace_file'],
+    '/documents/download' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'download_doc'],
+    '/documents/file' => ['controller' => 'DocumentController.php', 'handler' => 'serve_doc_file'],
+    '/documents/version/upload' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'upload_version'],
+    '/documents/checkout' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'checkout_doc'],
+    '/documents/checkin' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'checkin_doc'],
+    '/documents/metadata' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'update_metadata'],
+    '/documents/route' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'route_document'],
+    '/documents/message/send' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'send_document_message'],
+    '/documents/review/decision' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'review_document_decision'],
+    '/documents/review/accept' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'accept_review_assignment'],
+    '/documents/review/decline' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'decline_review_assignment'],
+    '/documents/submit' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'submit_document_for_review'],
+    '/documents/bulk' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'bulk_action'],
+    '/documents/delete' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'soft_delete'],
+    '/documents/move-to-official' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'move_doc_to_official'],
+    '/documents/move-to-private' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'move_doc_to_private'],
+    '/documents/manage-selected' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'manage_selected_documents'],
+    '/documents/restore' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'restore_doc'],
+    '/folders/restore' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'restore_folder'],
+    '/documents/trash/empty' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'empty_trash'],
+    '/documents/trash/delete-selected' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'delete_selected_trash'],
+    '/documents/share' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'share_doc'],
+    '/documents/share/respond' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'respond_to_share'],
+    '/documents/revoke' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'revoke_share'],
+    '/folders/create' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'create_folder'],
+    '/folders/delete' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'delete_folder'],
+    '/folders/move-to-official' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'move_folder_to_official'],
+    '/folders/move-to-private' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'move_folder_to_private'],
+    '/folders/rename' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'rename_folder'],
+    '/folders/share' => ['middleware' => ['require_login.php'], 'controller' => 'DocumentController.php', 'handler' => 'share_folder'],
+    '/admin/users' => ['middleware' => ['require_login.php'], 'controller' => 'AdminController.php', 'handler' => 'admin_users'],
+    '/admin/users/export' => ['middleware' => ['require_login.php'], 'controller' => 'AdminController.php', 'handler' => 'admin_export_users'],
+    '/admin/users/toggle' => ['middleware' => ['require_login.php'], 'controller' => 'AdminController.php', 'handler' => 'admin_toggle_user'],
+    '/admin/users/create' => ['middleware' => ['require_login.php'], 'controller' => 'AdminController.php', 'handler' => 'admin_create_user'],
+    '/admin/divisions/create' => ['middleware' => ['require_login.php'], 'controller' => 'AdminController.php', 'handler' => 'admin_create_division'],
+    '/admin/users/delete' => ['middleware' => ['require_login.php'], 'controller' => 'AdminController.php', 'handler' => 'admin_delete_user'],
+    '/admin/users/role' => ['middleware' => ['require_login.php'], 'controller' => 'AdminController.php', 'handler' => 'admin_change_role'],
+    '/admin/users/password' => ['middleware' => ['require_login.php'], 'controller' => 'AdminController.php', 'handler' => 'admin_change_user_password'],
+    '/admin/logs' => ['middleware' => ['require_login.php'], 'controller' => 'AdminController.php', 'handler' => 'admin_logs'],
+    '/admin/logs/export' => ['middleware' => ['require_login.php'], 'controller' => 'AdminController.php', 'handler' => 'admin_export_logs'],
+  ];
+}
+
+function wdms_require_route_files(string $root, array $route): void {
+  foreach ($route['middleware'] ?? [] as $middleware) {
+    require $root . "/app/middleware/" . $middleware;
+  }
+
+  if (!empty($route['controller'])) {
+    require $root . "/app/controllers/" . $route['controller'];
+  }
+}
+
+function wdms_dashboard_redirect(): void {
+  redirect(workspace_home_path());
+}
+
+function wdms_logout(): void {
+  global $pdo;
+
+  if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    csrf_verify();
+  } else {
+    redirect('/');
+  }
+  if (!empty($_SESSION['user']['id'])) {
+    require __DIR__ . "/../app/models/AuditLog.php";
+    AuditLog::add($pdo, (int)$_SESSION['user']['id'], "Logged out", null, null);
+  }
+  session_destroy();
+  redirect('/login');
+}
+
+function wdms_dispatch_web_route(string $root, string $path): bool {
+  if ($path === '/logout') {
+    wdms_logout();
+    return true;
+  }
+
+  $routes = wdms_web_routes();
+  if (!isset($routes[$path])) {
+    return false;
+  }
+
+  $route = $routes[$path];
+  wdms_require_route_files($root, $route);
+
+  $handler = $route['handler'] ?? '';
+  if ($handler === '' || !function_exists($handler)) {
+    throw new RuntimeException('Route handler is not available for ' . $path);
+  }
+
+  $handler();
+  return true;
+}
+
+$path = wdms_normalized_request_path();
 
 if (str_starts_with($path, '/api/')) {
   require $ROOT . "/app/controllers/ApiController.php";
@@ -26,332 +141,7 @@ if (str_starts_with($path, '/api/')) {
   exit;
 }
 
-switch ($path) {
-
-  // auth
-  case '/':
-  case '/login':
-    require $ROOT . "/app/controllers/AuthController.php";
-    login();
-    break;
-
-  case '/logout':
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-      csrf_verify();
-    } else {
-      redirect('/');
-    }
-    if (!empty($_SESSION['user']['id'])) {
-      require $ROOT . "/app/models/AuditLog.php";
-      AuditLog::add($pdo, (int)$_SESSION['user']['id'], "Logged out", null, null);
-    }
-    session_destroy();
-    redirect('/login');
-    break;
-
-  case '/notifications/read':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/NotificationController.php";
-    notifications_mark_read();
-    break;
-
-  case '/notifications/clear':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/NotificationController.php";
-    notifications_clear_all();
-    break;
-
-  // dashboard
-  case '/dashboard':
-    require $ROOT . "/app/middleware/require_login.php";
-    redirect(workspace_home_path());
-    break;
-
-  case '/account/password':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/AccountController.php";
-    account_password();
-    break;
-
-  case '/account/onboarding/complete':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/AccountController.php";
-    account_complete_onboarding();
-    break;
-
-  // documents
-  case '/documents':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    documents();
-    break;
-
-  case '/documents/upload':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    upload();
-    break;
-
-  case '/documents/create':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    create_document();
-    break;
-
-  case '/documents/view':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    view_doc();
-    break;
-
-  case '/documents/replace':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    replace_file();
-    break;
-
-  case '/documents/download':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    download_doc();
-    break;
-
-  case '/documents/file':
-    require $ROOT . "/app/controllers/DocumentController.php";
-    serve_doc_file();
-    break;
-
-  case '/documents/version/upload':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    upload_version();
-    break;
-
-  case '/documents/checkout':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    checkout_doc();
-    break;
-
-  case '/documents/checkin':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    checkin_doc();
-    break;
-
-  case '/documents/metadata':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    update_metadata();
-    break;
-
-  case '/documents/route':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    route_document();
-    break;
-
-  case '/documents/message/send':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    send_document_message();
-    break;
-
-  case '/documents/review/decision':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    review_document_decision();
-    break;
-
-  case '/documents/review/accept':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    accept_review_assignment();
-    break;
-
-  case '/documents/review/decline':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    decline_review_assignment();
-    break;
-
-  case '/documents/submit':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    submit_document_for_review();
-    break;
-
-  case '/documents/bulk':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    bulk_action();
-    break;
-
-  case '/documents/delete':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    soft_delete();
-    break;
-
-  case '/documents/move-to-official':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    move_doc_to_official();
-    break;
-
-  case '/documents/move-to-private':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    move_doc_to_private();
-    break;
-
-  case '/documents/manage-selected':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    manage_selected_documents();
-    break;
-
-  case '/documents/restore':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    restore_doc();
-    break;
-
-  case '/folders/restore':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    restore_folder();
-    break;
-
-  case '/documents/trash/empty':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    empty_trash();
-    break;
-
-  case '/documents/trash/delete-selected':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    delete_selected_trash();
-    break;
-
-  case '/documents/share':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    share_doc();
-    break;
-
-  case '/documents/share/respond':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    respond_to_share();
-    break;
-
-  case '/documents/revoke':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    revoke_share();
-    break;
-
-  // folders
-  case '/folders/create':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    create_folder();
-    break;
-
-  case '/folders/delete':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    delete_folder();
-    break;
-
-  case '/folders/move-to-official':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    move_folder_to_official();
-    break;
-
-  case '/folders/move-to-private':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    move_folder_to_private();
-    break;
-
-  case '/folders/rename':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    rename_folder();
-    break;
-
-  case '/folders/share':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/DocumentController.php";
-    share_folder();
-    break;
-
-  // admin
-  case '/admin/users':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/AdminController.php";
-    admin_users();
-    break;
-
-  case '/admin/users/export':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/AdminController.php";
-    admin_export_users();
-    break;
-
-  case '/admin/users/toggle':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/AdminController.php";
-    admin_toggle_user();
-    break;
-
-  case '/admin/users/create':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/AdminController.php";
-    admin_create_user();
-    break;
-
-  case '/admin/divisions/create':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/AdminController.php";
-    admin_create_division();
-    break;
-
-  case '/admin/users/delete':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/AdminController.php";
-    admin_delete_user();
-    break;
-
-  case '/admin/users/role':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/AdminController.php";
-    admin_change_role();
-    break;
-
-  case '/admin/users/password':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/AdminController.php";
-    admin_change_user_password();
-    break;
-
-  case '/admin/logs':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/AdminController.php";
-    admin_logs();
-    break;
-
-  case '/admin/logs/export':
-    require $ROOT . "/app/middleware/require_login.php";
-    require $ROOT . "/app/controllers/AdminController.php";
-    admin_export_logs();
-    break;
-
-  default:
-    http_response_code(404);
-    echo "404 Not Found";
+if (!wdms_dispatch_web_route($ROOT, $path)) {
+  http_response_code(404);
+  echo "404 Not Found";
 }

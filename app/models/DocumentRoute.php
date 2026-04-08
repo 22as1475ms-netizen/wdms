@@ -37,7 +37,17 @@ class DocumentRoute {
   }
 
   public static function normalizeStatus(string $value): string {
-    return strtoupper(trim($value)) === 'ROUTED' ? 'ROUTED' : 'NOT_ROUTED';
+    return match (strtoupper(trim($value))) {
+      'PENDING_SHARE_ACCEPTANCE' => 'PENDING_SHARE_ACCEPTANCE',
+      'SHARE_ACCEPTED' => 'SHARE_ACCEPTED',
+      'SHARE_DECLINED' => 'SHARE_DECLINED',
+      'PENDING_REVIEW_ACCEPTANCE' => 'PENDING_REVIEW_ACCEPTANCE',
+      'IN_REVIEW' => 'IN_REVIEW',
+      'REVIEW_ASSIGNMENT_DECLINED' => 'REVIEW_ASSIGNMENT_DECLINED',
+      'APPROVED' => 'APPROVED',
+      'REJECTED' => 'REJECTED',
+      default => 'AVAILABLE',
+    };
   }
 
   private static function cleanLocation(?string $value): ?string {

@@ -71,6 +71,23 @@ function wdms_storage_dir(): string {
   return rtrim(__DIR__ . '/../../storage/documents', "\\/");
 }
 
+function wdms_default_upload_bytes(): int {
+  return wdms_is_vercel_runtime() ? 4 * 1024 * 1024 : 1024 * 1024 * 1024;
+}
+
+function wdms_is_vercel_runtime(): bool {
+  return wdms_env_bool('VERCEL', false);
+}
+
+function wdms_storage_driver(): string {
+  $configured = strtolower(wdms_env_string('STORAGE_DRIVER', ''));
+  if (in_array($configured, ['local', 'database'], true)) {
+    return $configured;
+  }
+
+  return wdms_is_vercel_runtime() ? 'database' : 'local';
+}
+
 function wdms_public_path(string $path = ''): string {
   $root = realpath(__DIR__ . '/../../public') ?: (__DIR__ . '/../../public');
   if ($path === '') {
@@ -84,10 +101,32 @@ function wdms_public_upload_dir(string $segment): string {
   return wdms_public_path('uploads/' . trim($segment, "\\/"));
 }
 
+function wdms_session_dir(): string {
+  $configured = wdms_env_string('SESSION_SAVE_PATH', '');
+  if ($configured !== '') {
+    return rtrim($configured, "\\/");
+  }
+
+  return rtrim(__DIR__ . '/../../storage/runtime_sessions', "\\/");
+}
+
+function wdms_session_driver(): string {
+  $configured = strtolower(wdms_env_string('SESSION_DRIVER', ''));
+  if (in_array($configured, ['file', 'database'], true)) {
+    return $configured;
+  }
+
+  return wdms_is_vercel_runtime() ? 'database' : 'file';
+}
+
 function wdms_app_secret(): string {
   $envSecret = wdms_env_string('APP_SECRET', '');
   if ($envSecret !== '') {
     return $envSecret;
+  }
+
+  if (wdms_is_vercel_runtime()) {
+    throw new RuntimeException('APP_SECRET must be configured when running on Vercel.');
   }
 
   $secretDir = __DIR__ . '/../../storage/secrets';
@@ -118,7 +157,7 @@ function wdms_bootstrap_session(): void {
   if (session_status() === PHP_SESSION_ACTIVE) {
     return;
   }
-  
+
   $isSecure = false;
   if (!empty($_SERVER['HTTP_X_FORWARDED_PROTO'])) {
     $isSecure = strtolower((string)$_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https';
@@ -136,18 +175,39 @@ function wdms_bootstrap_session(): void {
     'samesite' => wdms_env_string('SESSION_SAMESITE', 'Lax'),
   ]);
 
+  if (SESSION_DRIVER === 'database') {
+    if (!isset($GLOBALS['pdo']) || !$GLOBALS['pdo'] instanceof PDO) {
+      throw new RuntimeException('Database session driver requires an active PDO connection.');
+    }
+
+    require_once __DIR__ . '/../services/DatabaseSessionHandler.php';
+    $handler = new DatabaseSessionHandler($GLOBALS['pdo'], SESSION_TIMEOUT_MINUTES * 60);
+    session_set_save_handler($handler, true);
+  } else {
+    $sessionDir = wdms_session_dir();
+    if (!is_dir($sessionDir)) {
+      if (!@mkdir($sessionDir, 0775, true) && !is_dir($sessionDir)) {
+        throw new RuntimeException('Session storage is unavailable.');
+      }
+    }
+
+    session_save_path($sessionDir);
+  }
+
   session_start();
 }
 
 define('BASE_URL', wdms_detect_base_url());
 define('STORAGE_DIR', wdms_storage_dir());
+define('STORAGE_DRIVER', wdms_storage_driver());
 define('APP_NAME', 'WDMS');
 define('APP_DEBUG', wdms_env_bool('APP_DEBUG', false));
 define('APP_URL', rtrim(wdms_env_string('APP_URL', ''), '/'));
 define('APP_SECRET', wdms_app_secret());
+define('SESSION_DRIVER', wdms_session_driver());
 define('PRIVATE_STORAGE_LIMIT_BYTES', 5 * 1024 * 1024 * 1024);
 define('OFFICIAL_STORAGE_LIMIT_BYTES', 5 * 1024 * 1024 * 1024);
 define('SESSION_TIMEOUT_MINUTES', wdms_env_int('SESSION_TIMEOUT_MINUTES', 45, 5));
 define('TRASH_RETENTION_DAYS', wdms_env_int('TRASH_RETENTION_DAYS', 0, 0));
-define('MAX_UPLOAD_BYTES_USER', wdms_env_int('MAX_UPLOAD_BYTES_USER', 1024 * 1024 * 1024, 1));
-define('MAX_UPLOAD_BYTES_ADMIN', wdms_env_int('MAX_UPLOAD_BYTES_ADMIN', 1024 * 1024 * 1024, 1));
+define('MAX_UPLOAD_BYTES_USER', wdms_env_int('MAX_UPLOAD_BYTES_USER', wdms_default_upload_bytes(), 1));
+define('MAX_UPLOAD_BYTES_ADMIN', wdms_env_int('MAX_UPLOAD_BYTES_ADMIN', wdms_default_upload_bytes(), 1));

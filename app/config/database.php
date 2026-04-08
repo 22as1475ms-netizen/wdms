@@ -45,13 +45,15 @@ function wdms_bootstrap_schema(PDO $pdo): void {
   wdms_add_column_if_missing($pdo, 'documents', 'document_type', "VARCHAR(20) NOT NULL DEFAULT 'INCOMING'");
   wdms_add_column_if_missing($pdo, 'documents', 'signatory', "VARCHAR(150) NULL");
   wdms_add_column_if_missing($pdo, 'documents', 'current_location', "VARCHAR(180) NULL");
-  wdms_add_column_if_missing($pdo, 'documents', 'routing_status', "VARCHAR(20) NOT NULL DEFAULT 'NOT_ROUTED'");
+  wdms_add_column_if_missing($pdo, 'documents', 'routing_status', "VARCHAR(40) NOT NULL DEFAULT 'AVAILABLE'");
   wdms_add_column_if_missing($pdo, 'documents', 'priority_level', "VARCHAR(20) NOT NULL DEFAULT 'NORMAL'");
   wdms_add_column_if_missing($pdo, 'documents', 'document_date', "DATE NULL");
   wdms_add_column_if_missing($pdo, 'documents', 'review_acceptance_status', "VARCHAR(30) NOT NULL DEFAULT 'NOT_SENT'");
   wdms_add_column_if_missing($pdo, 'documents', 'review_accepted_at', "TIMESTAMP NULL");
   wdms_add_column_if_missing($pdo, 'documents', 'review_declined_at', "TIMESTAMP NULL");
   wdms_add_column_if_missing($pdo, 'documents', 'review_acceptance_note', "VARCHAR(1000) NULL");
+  wdms_add_column_if_missing($pdo, 'documents', 'route_outcome', "VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'");
+  wdms_add_column_if_missing($pdo, 'documents', 'route_closed_at', "TIMESTAMP NULL");
   wdms_add_column_if_missing($pdo, 'users', 'avatar_photo', "VARCHAR(255) NULL");
   wdms_add_column_if_missing($pdo, 'users', 'avatar_preset', "VARCHAR(32) NULL");
   wdms_add_column_if_missing($pdo, 'users', 'division_id', "INT NULL");
@@ -121,12 +123,41 @@ function wdms_bootstrap_schema(PDO $pdo): void {
   ");
 
   $pdo->exec("
+    CREATE TABLE IF NOT EXISTS sessions (
+      id VARCHAR(128) PRIMARY KEY,
+      payload MEDIUMTEXT NOT NULL,
+      last_activity_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      expires_at DATETIME NOT NULL,
+      INDEX(expires_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  ");
+
+  $pdo->exec("
+    CREATE TABLE IF NOT EXISTS stored_files (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      storage_key VARCHAR(255) NOT NULL,
+      kind VARCHAR(40) NOT NULL DEFAULT 'generic',
+      visibility VARCHAR(20) NOT NULL DEFAULT 'private',
+      original_name VARCHAR(255) NULL,
+      mime_type VARCHAR(120) NULL,
+      size_bytes BIGINT NOT NULL DEFAULT 0,
+      content LONGBLOB NOT NULL,
+      created_by INT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_storage_key (storage_key),
+      INDEX(kind),
+      INDEX(visibility),
+      INDEX(created_by)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  ");
+
+  $pdo->exec("
     CREATE TABLE IF NOT EXISTS document_routes (
       id INT AUTO_INCREMENT PRIMARY KEY,
       document_id INT NOT NULL,
       from_location VARCHAR(180) NULL,
       to_location VARCHAR(180) NOT NULL,
-      status_snapshot VARCHAR(20) NOT NULL DEFAULT 'NOT_ROUTED',
+      status_snapshot VARCHAR(40) NOT NULL DEFAULT 'AVAILABLE',
       note VARCHAR(1000) NULL,
       routed_by INT NOT NULL,
       routed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -147,7 +178,12 @@ function wdms_bootstrap_schema(PDO $pdo): void {
   wdms_add_column_if_missing($pdo, 'permissions', 'declined_at', "TIMESTAMP NULL");
   wdms_add_column_if_missing($pdo, 'permissions', 'response_note', "VARCHAR(1000) NULL");
 
-  wdms_unify_routed_storage($pdo);
+  wdms_ensure_varchar_length($pdo, 'documents', 'routing_status', 40, false, 'AVAILABLE');
+  wdms_ensure_varchar_length($pdo, 'document_routes', 'status_snapshot', 40, false, 'AVAILABLE');
+
+  if (wdms_env_bool('DB_AUTO_UNIFY_ROUTED_STORAGE', false)) {
+    wdms_unify_routed_storage($pdo);
+  }
 }
 
 function wdms_unify_routed_storage(PDO $pdo): void {
@@ -185,4 +221,31 @@ function wdms_add_column_if_missing(PDO $pdo, string $table, string $column, str
   if ((int)$s->fetchColumn() === 0) {
     $pdo->exec("ALTER TABLE {$table} ADD COLUMN {$column} {$definition}");
   }
+}
+
+function wdms_ensure_varchar_length(PDO $pdo, string $table, string $column, int $minLength, bool $nullable, ?string $default = null): void {
+  $sql = "
+    SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE, COLUMN_DEFAULT
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ?
+      AND COLUMN_NAME = ?
+    LIMIT 1
+  ";
+  $s = $pdo->prepare($sql);
+  $s->execute([$table, $column]);
+  $columnInfo = $s->fetch();
+  if (!$columnInfo) {
+    return;
+  }
+
+  $dataType = strtolower((string)($columnInfo['DATA_TYPE'] ?? ''));
+  $currentLength = (int)($columnInfo['CHARACTER_MAXIMUM_LENGTH'] ?? 0);
+  if ($dataType === 'varchar' && $currentLength >= $minLength) {
+    return;
+  }
+
+  $nullSql = $nullable ? 'NULL' : 'NOT NULL';
+  $defaultSql = $default !== null ? " DEFAULT '" . str_replace("'", "''", $default) . "'" : '';
+  $pdo->exec("ALTER TABLE {$table} MODIFY COLUMN {$column} VARCHAR({$minLength}) {$nullSql}{$defaultSql}");
 }

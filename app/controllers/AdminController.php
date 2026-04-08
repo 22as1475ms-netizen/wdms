@@ -1139,14 +1139,11 @@ function admin_delete_user(): void {
   }
 
   foreach ($filePaths as $path) {
-    $abs = DocumentService::absolutePathFromVersion($path);
-    if (is_file($abs)) {
-      @unlink($abs);
-    }
+    StorageService::delete($pdo, $path);
   }
 
-  delete_directory_recursive(rtrim(STORAGE_DIR, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'private' . DIRECTORY_SEPARATOR . $id);
-  delete_directory_recursive(rtrim(STORAGE_DIR, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'official' . DIRECTORY_SEPARATOR . $id);
+  StorageService::deleteByPrefix($pdo, "../storage/documents/private/" . $id . "/");
+  StorageService::deleteByPrefix($pdo, "../storage/documents/official/" . $id . "/");
 
   AuditLog::add(
     $pdo,

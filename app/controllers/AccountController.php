@@ -3,12 +3,15 @@ require_once __DIR__ . "/../helpers/csrf.php";
 require_once __DIR__ . "/../helpers/http.php";
 require_once __DIR__ . "/../models/User.php";
 require_once __DIR__ . "/../models/AuditLog.php";
+require_once __DIR__ . "/../services/StorageService.php";
 
 function account_avatar_presets(): array {
   return ['preset-ocean', 'preset-sunset', 'preset-forest', 'preset-plum', 'preset-slate', 'preset-amber'];
 }
 
 function account_avatar_upload(array $file, int $uid): ?string {
+  global $pdo;
+
   if (($file['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
     return null;
   }
@@ -32,18 +35,19 @@ function account_avatar_upload(array $file, int $uid): ?string {
     return null;
   }
 
-  $dir = wdms_public_upload_dir('avatars');
-  if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
-    return null;
-  }
-
   $filename = 'u' . $uid . '_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
-  $dest = $dir . DIRECTORY_SEPARATOR . $filename;
-  if (!@move_uploaded_file($tmp, $dest)) {
+  $storageKey = 'public/avatars/' . $filename;
+  if (!StorageService::storeUploadedFile($pdo, $file, $storageKey, [
+    'kind' => 'avatar',
+    'visibility' => 'public',
+    'original_name' => (string)($file['name'] ?? $filename),
+    'mime_type' => $mime,
+    'created_by' => $uid,
+  ])) {
     return null;
   }
 
-  return '/uploads/avatars/' . $filename;
+  return StorageService::publicMediaUrl($storageKey);
 }
 
 function account_password_strength_error(string $current, string $next, string $confirm): ?string {
@@ -100,10 +104,15 @@ function account_password(): void {
         }
         if ($uploadedPath !== null || $usePreset) {
           $oldPhoto = trim((string)($u['avatar_photo'] ?? ''));
-          if ($oldPhoto !== '' && str_starts_with($oldPhoto, '/uploads/avatars/')) {
-            $oldAbs = wdms_public_path(ltrim($oldPhoto, '/'));
-            if (is_file($oldAbs)) {
-              @unlink($oldAbs);
+          if ($oldPhoto !== '') {
+            $oldKey = account_avatar_storage_key($oldPhoto);
+            if ($oldKey !== null) {
+              StorageService::delete($pdo, $oldKey);
+            } elseif (str_starts_with($oldPhoto, '/uploads/avatars/')) {
+              $oldAbs = wdms_public_path(ltrim($oldPhoto, '/'));
+              if (is_file($oldAbs)) {
+                @unlink($oldAbs);
+              }
             }
           }
         }
@@ -144,6 +153,18 @@ function account_password(): void {
     'currentUser' => $currentUser,
     'avatarPresets' => account_avatar_presets(),
   ]);
+}
+
+function account_avatar_storage_key(string $photoPath): ?string {
+  $parts = parse_url($photoPath);
+  $path = (string)($parts['path'] ?? '');
+  parse_str((string)($parts['query'] ?? ''), $query);
+  if ($path !== '/media/file') {
+    return null;
+  }
+
+  $key = trim((string)($query['k'] ?? ''));
+  return $key !== '' ? $key : null;
 }
 
 function account_complete_onboarding(): void {

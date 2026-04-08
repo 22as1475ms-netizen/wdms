@@ -48,7 +48,9 @@ class Document {
       $metadata['status'] ?? 'Draft',
       $metadata['retention_until'] ?? null,
     ]);
-    return (int)$pdo->lastInsertId();
+    $documentId = (int)$pdo->lastInsertId();
+    self::markRouteActive($pdo, $documentId);
+    return $documentId;
   }
 
   public static function normalizeStorageArea(string $storageArea): string {
@@ -94,6 +96,22 @@ class Document {
       self::normalizeRoutingStatus($routingStatus),
       $id,
     ]);
+  }
+
+  public static function markRouteActive(PDO $pdo, int $id): void {
+    $pdo->prepare("
+      UPDATE documents
+      SET route_outcome='ACTIVE', route_closed_at=NULL
+      WHERE id=?
+    ")->execute([$id]);
+  }
+
+  public static function closeRoute(PDO $pdo, int $id, string $outcome): void {
+    $pdo->prepare("
+      UPDATE documents
+      SET route_outcome=?, route_closed_at=NOW()
+      WHERE id=?
+    ")->execute([self::normalizeRouteOutcome($outcome), $id]);
   }
 
   public static function moveToStorageArea(PDO $pdo, int $id, string $storageArea, ?int $folderId, ?int $divisionId = null): void {
@@ -744,6 +762,16 @@ class Document {
       'APPROVED' => 'APPROVED',
       'REJECTED' => 'REJECTED',
       default => 'AVAILABLE',
+    };
+  }
+
+  public static function normalizeRouteOutcome(string $value): string {
+    return match (strtoupper(trim($value))) {
+      'APPROVED' => 'APPROVED',
+      'RETURNED' => 'RETURNED',
+      'REJECTED' => 'REJECTED',
+      'ARCHIVED' => 'ARCHIVED',
+      default => 'ACTIVE',
     };
   }
 
