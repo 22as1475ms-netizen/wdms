@@ -7504,3 +7504,353 @@ html[data-color-mode="dark"] .document-preview-docx {
     max-width: 100%;
   }
 }
+
+@media (max-width: 768px) {
+  .app-nav {
+    position: static;
+    backdrop-filter: none;
+  }
+
+  .drive-shell {
+    gap: 10px;
+  }
+
+  .drive-sidebar {
+    padding: 14px;
+    border-radius: 22px;
+  }
+
+  .drive-logo {
+    margin-bottom: 0;
+    font-size: 0.96rem;
+  }
+
+  .drive-logo__image {
+    width: 40px;
+    height: 40px;
+    padding: 4px;
+    border-radius: 12px;
+  }
+
+  .drive-compose {
+    gap: 10px;
+  }
+
+  .drive-compose > .drive-sidebar__section,
+  .drive-compose > .drive-form-stack,
+  .drive-compose > .drive-storage {
+    padding: 12px;
+    border-radius: 18px;
+  }
+
+  .drive-sidebar__section {
+    gap: 8px;
+  }
+
+  .drive-sidebar-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .drive-sidebar-nav__item {
+    min-height: 56px;
+    justify-content: center;
+    text-align: center;
+    padding: 10px;
+    border-radius: 16px;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 0.88rem;
+  }
+
+  .drive-sidebar-nav__item:hover,
+  .drive-sidebar-nav__item:focus {
+    transform: none;
+  }
+
+  .drive-note {
+    padding: 12px 14px;
+    border-radius: 16px;
+    font-size: 0.92rem;
+    line-height: 1.45;
+  }
+
+  .workspace-toolbar,
+  .drive-toolbar,
+  .toolbar-row {
+    gap: 12px;
+    margin-bottom: 14px;
+    padding-bottom: 14px;
+  }
+
+  .workspace-hero__copy {
+    gap: 6px;
+  }
+
+  .workspace-hero__eyebrow {
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+  }
+
+  .drive-search__well {
+    padding: 16px 16px 14px;
+    border-radius: 20px;
+    box-shadow: 0 14px 28px rgba(16, 67, 82, 0.06);
+  }
+
+  .drive-search__well::before {
+    inset: 8px;
+    border-radius: 16px;
+  }
+
+  .drive-search__hero {
+    gap: 4px;
+    margin-bottom: 12px;
+    justify-items: start;
+    text-align: left;
+  }
+
+  .drive-search__copy,
+  .drive-search__results,
+  .drive-search__eyebrow {
+    display: none;
+  }
+
+  .drive-search__title {
+    font-size: 1rem;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+  }
+
+  .drive-search__surface {
+    border-radius: 18px;
+    padding: 0;
+  }
+
+  .drive-search--centered .drive-search__field {
+    min-height: 52px;
+    padding: 0 14px 0 42px;
+    font-size: 0.95rem;
+  }
+
+  .drive-search__surface-icon {
+    left: 14px;
+    font-size: 0.98rem;
+  }
+
+  .drive-search__submit {
+    position: static;
+    width: 100%;
+    margin: 8px 0 0;
+    min-height: 44px;
+    transform: none;
+  }
+
+  .workspace-controls {
+    gap: 10px;
+  }
+
+  .workspace-controls__actions,
+  .workspace-quick-tools {
+    gap: 8px;
+  }
+
+  .workspace-sort-form {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .workspace-sort-form .form-select {
+    width: 100%;
+  }
+
+  .drive-file-grid {
+    gap: 10px;
+    padding: 6px 0;
+  }
+
+  .drive-file-card,
+  .drive-file-card--list {
+    border-radius: 18px;
+  }
+
+  .drive-file-card__head,
+  .drive-file-card__body {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .drive-file-card__preview {
+    border-radius: 16px;
+  }
+
+  .drive-file-card__name {
+    font-size: 1rem;
+    line-height: 1.25;
+  }
+
+  .drive-file-card__meta-row {
+    gap: 8px;
+    font-size: 0.82rem;
+  }
+
+  .global-chat-launcher,
+  .doc-message-fab {
+    width: 58px;
+    height: 58px;
+    right: 14px;
+    bottom: calc(18px + env(safe-area-inset-bottom));
+  }
+
+  .drive-upload-panel {
+    bottom: calc(84px + env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 576px) {
+  .app-shell {
+    padding: 10px;
+  }
+
+  .app-nav .container-fluid {
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+  }
+
+  .app-nav__inner {
+    min-height: auto;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .app-brand {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .app-brand__logo {
+    width: 40px;
+    height: 40px;
+  }
+
+  .app-brand__name {
+    font-size: 0.86rem;
+  }
+
+  .app-nav-search__shell {
+    border-radius: 18px;
+    padding-bottom: 0;
+  }
+
+  .app-nav-search__input {
+    min-height: 46px;
+    padding: 0 14px 0 40px;
+    font-size: 0.94rem;
+  }
+
+  .app-nav-search__icon {
+    left: 14px;
+  }
+
+  .app-nav-search__btn {
+    position: static;
+    width: 100%;
+    margin: 8px 0 0;
+    transform: none;
+    border-radius: 14px;
+  }
+
+  .app-nav__cluster {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .app-user-pill {
+    padding: 6px 10px;
+    min-height: 42px;
+  }
+
+  .drive-sidebar {
+    padding: 12px;
+  }
+
+  .drive-logo span:last-child {
+    font-size: 0.86rem;
+    line-height: 1.15;
+  }
+
+  .drive-compose > .drive-sidebar__section,
+  .drive-compose > .drive-form-stack,
+  .drive-compose > .drive-storage {
+    padding: 10px;
+    border-radius: 16px;
+  }
+
+  .drive-sidebar-nav {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .drive-sidebar-nav__item {
+    min-height: 52px;
+    font-size: 0.84rem;
+  }
+
+  .drive-label {
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+  }
+
+  .drive-note {
+    padding: 10px 12px;
+    font-size: 0.88rem;
+  }
+
+  .workspace-page,
+  .drive-content,
+  .details-shell,
+  .details-card {
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  .workspace-hero__title,
+  .drive-title,
+  .details-shell__title {
+    font-size: clamp(1.25rem, 7vw, 1.6rem);
+    line-height: 1.05;
+  }
+
+  .drive-search__well {
+    padding: 14px 14px 12px;
+    border-radius: 18px;
+  }
+
+  .drive-search__title {
+    font-size: 0.96rem;
+  }
+
+  .drive-search--centered .drive-search__field {
+    min-height: 48px;
+    padding: 0 12px 0 40px;
+    font-size: 0.92rem;
+  }
+
+  .drive-file-card__head,
+  .drive-file-card__body,
+  .drive-file-card--list .drive-file-card__head,
+  .drive-file-card--list .drive-file-card__body {
+    padding: 12px;
+  }
+
+  .drive-file-card--list .drive-file-card__preview {
+    margin: 8px 12px 0;
+  }
+
+  .drive-file-card__preview {
+    min-height: 180px;
+  }
+
+  .workspace-file-details-modal .modal-dialog {
+    margin: 0.5rem;
+  }
+}
