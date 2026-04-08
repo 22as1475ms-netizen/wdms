@@ -5,6 +5,7 @@ $dbName = wdms_env_string('DB_NAME', 'wdms');
 $dbUser = wdms_env_string('DB_USER', 'root');
 $dbPass = wdms_env_string('DB_PASS', '');
 $dbCharset = wdms_env_string('DB_CHARSET', 'utf8mb4');
+const WDMS_SCHEMA_VERSION = 2;
 
 $pdo = new PDO(
   "mysql:host={$dbHost};port={$dbPort};dbname={$dbName};charset={$dbCharset}",
@@ -22,6 +23,11 @@ if (wdms_env_bool('DB_AUTO_BOOTSTRAP_SCHEMA', true)) {
 }
 
 function wdms_bootstrap_schema(PDO $pdo): void {
+  wdms_ensure_meta_table($pdo);
+  if (wdms_get_schema_version($pdo) >= WDMS_SCHEMA_VERSION) {
+    return;
+  }
+
   wdms_ensure_base_schema($pdo);
 
   wdms_add_column_if_missing($pdo, 'folders', 'deleted_at', "TIMESTAMP NULL");
@@ -180,12 +186,24 @@ function wdms_bootstrap_schema(PDO $pdo): void {
   wdms_add_column_if_missing($pdo, 'permissions', 'declined_at', "TIMESTAMP NULL");
   wdms_add_column_if_missing($pdo, 'permissions', 'response_note', "VARCHAR(1000) NULL");
 
+  wdms_add_index_if_missing($pdo, 'documents', 'idx_documents_owner_deleted_storage_folder', ['owner_id', 'deleted_at', 'storage_area', 'folder_id']);
+  wdms_add_index_if_missing($pdo, 'documents', 'idx_documents_division_storage_deleted', ['division_id', 'storage_area', 'deleted_at']);
+  wdms_add_index_if_missing($pdo, 'documents', 'idx_documents_review_acceptance_status', ['review_acceptance_status', 'division_id']);
+  wdms_add_index_if_missing($pdo, 'documents', 'idx_documents_route_status', ['routing_status', 'route_outcome']);
+  wdms_add_index_if_missing($pdo, 'document_versions', 'idx_document_versions_doc_version', ['document_id', 'version_number']);
+  wdms_add_index_if_missing($pdo, 'document_routes', 'idx_document_routes_doc_routed', ['document_id', 'routed_at']);
+  wdms_add_index_if_missing($pdo, 'notifications', 'idx_notifications_user_read_created', ['user_id', 'is_read', 'created_at']);
+  wdms_add_index_if_missing($pdo, 'permissions', 'idx_permissions_document_user', ['document_id', 'user_id']);
+  wdms_add_index_if_missing($pdo, 'folders', 'idx_folders_owner_deleted_storage', ['owner_id', 'deleted_at', 'storage_area']);
+
   wdms_ensure_varchar_length($pdo, 'documents', 'routing_status', 40, false, 'AVAILABLE');
   wdms_ensure_varchar_length($pdo, 'document_routes', 'status_snapshot', 40, false, 'AVAILABLE');
 
   if (wdms_env_bool('DB_AUTO_UNIFY_ROUTED_STORAGE', false)) {
     wdms_unify_routed_storage($pdo);
   }
+
+  wdms_set_schema_version($pdo, WDMS_SCHEMA_VERSION);
 }
 
 function wdms_ensure_base_schema(PDO $pdo): void {
@@ -332,6 +350,32 @@ function wdms_seed_base_data(PDO $pdo): void {
   }
 }
 
+function wdms_ensure_meta_table(PDO $pdo): void {
+  $pdo->exec("
+    CREATE TABLE IF NOT EXISTS app_meta (
+      meta_key VARCHAR(100) PRIMARY KEY,
+      meta_value VARCHAR(255) NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  ");
+}
+
+function wdms_get_schema_version(PDO $pdo): int {
+  $stmt = $pdo->prepare("SELECT meta_value FROM app_meta WHERE meta_key = 'schema_version' LIMIT 1");
+  $stmt->execute();
+  $value = $stmt->fetchColumn();
+  return $value === false ? 0 : (int)$value;
+}
+
+function wdms_set_schema_version(PDO $pdo, int $version): void {
+  $stmt = $pdo->prepare("
+    INSERT INTO app_meta(meta_key, meta_value)
+    VALUES('schema_version', ?)
+    ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)
+  ");
+  $stmt->execute([(string)$version]);
+}
+
 function wdms_table_exists(PDO $pdo, string $table): bool {
   $s = $pdo->prepare("
     SELECT COUNT(*)
@@ -341,6 +385,31 @@ function wdms_table_exists(PDO $pdo, string $table): bool {
   ");
   $s->execute([$table]);
   return (int)$s->fetchColumn() > 0;
+}
+
+function wdms_add_index_if_missing(PDO $pdo, string $table, string $indexName, array $columns, bool $unique = false): void {
+  if (!wdms_table_exists($pdo, $table) || empty($columns)) {
+    return;
+  }
+
+  $stmt = $pdo->prepare("
+    SELECT COUNT(*)
+    FROM information_schema.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ?
+      AND INDEX_NAME = ?
+  ");
+  $stmt->execute([$table, $indexName]);
+  if ((int)$stmt->fetchColumn() > 0) {
+    return;
+  }
+
+  $columnSql = implode(', ', array_map(
+    static fn(string $column): string => $column,
+    $columns
+  ));
+  $uniqueSql = $unique ? 'UNIQUE ' : '';
+  $pdo->exec("ALTER TABLE {$table} ADD {$uniqueSql}INDEX {$indexName} ({$columnSql})");
 }
 
 function wdms_unify_routed_storage(PDO $pdo): void {
