@@ -5,7 +5,7 @@ require_once __DIR__ . "/../models/Permission.php";
 require_once __DIR__ . "/../models/Notification.php";
 require_once __DIR__ . "/../models/AuditLog.php";
 require_once __DIR__ . "/../models/Division.php";
-require_once __DIR__ . "/../services\AccessService.php";
+require_once __DIR__ . "/../services/AccessService.php";
 
 class DocumentShareService {
   public static function shareDocument(
