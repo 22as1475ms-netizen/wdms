@@ -198,37 +198,137 @@ function wdms_ensure_base_schema(PDO $pdo): void {
     return;
   }
 
-  $schemaFile = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'wdms.sql';
-  if (!is_file($schemaFile)) {
-    throw new RuntimeException('Base schema file wdms.sql was not found.');
-  }
+  $pdo->exec("
+    CREATE TABLE IF NOT EXISTS users(
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(100) NOT NULL,
+      email VARCHAR(120) UNIQUE NOT NULL,
+      password VARCHAR(255) NOT NULL,
+      role ENUM('ADMIN','DIVISION_CHIEF','EMPLOYEE') DEFAULT 'EMPLOYEE',
+      status ENUM('ACTIVE','DISABLED') DEFAULT 'ACTIVE',
+      division_id INT NULL,
+      onboarding_seen_at TIMESTAMP NULL,
+      onboarding_guide_version VARCHAR(40) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  ");
 
-  wdms_import_schema_sql($pdo, (string)file_get_contents($schemaFile));
+  $pdo->exec("
+    CREATE TABLE IF NOT EXISTS divisions(
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(120) NOT NULL,
+      chief_user_id INT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  ");
+
+  $pdo->exec("
+    CREATE TABLE IF NOT EXISTS folders(
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(150) NOT NULL,
+      owner_id INT NOT NULL,
+      storage_area ENUM('PRIVATE','OFFICIAL') NOT NULL DEFAULT 'PRIVATE',
+      deleted_at TIMESTAMP NULL,
+      deleted_by INT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX(owner_id),
+      INDEX(deleted_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  ");
+
+  $pdo->exec("
+    CREATE TABLE IF NOT EXISTS documents(
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      owner_id INT NOT NULL,
+      folder_id INT NULL,
+      storage_area ENUM('PRIVATE','OFFICIAL') DEFAULT 'PRIVATE',
+      division_id INT NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'Draft',
+      review_note VARCHAR(1000) NULL,
+      approval_locked TINYINT(1) NOT NULL DEFAULT 0,
+      submitted_at TIMESTAMP NULL,
+      reviewed_at TIMESTAMP NULL,
+      reviewed_by INT NULL,
+      deleted_at TIMESTAMP NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX(owner_id),
+      INDEX(folder_id),
+      INDEX(deleted_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  ");
+
+  $pdo->exec("
+    CREATE TABLE IF NOT EXISTS document_reviews(
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      document_id INT NOT NULL,
+      reviewer_id INT NOT NULL,
+      decision VARCHAR(20) NOT NULL,
+      note VARCHAR(1000) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  ");
+
+  $pdo->exec("
+    CREATE TABLE IF NOT EXISTS document_versions(
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      document_id INT NOT NULL,
+      file_path TEXT NOT NULL,
+      version_number INT NOT NULL,
+      created_by INT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX(document_id),
+      INDEX(created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  ");
+
+  $pdo->exec("
+    CREATE TABLE IF NOT EXISTS permissions(
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      document_id INT NOT NULL,
+      user_id INT NOT NULL,
+      permission ENUM('viewer','editor') NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_doc_user (document_id, user_id),
+      INDEX(user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  ");
+
+  $pdo->exec("
+    CREATE TABLE IF NOT EXISTS audit_logs(
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      action VARCHAR(255) NOT NULL,
+      document_id INT NULL,
+      meta TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX(user_id),
+      INDEX(created_at),
+      INDEX(document_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  ");
+
+  wdms_seed_base_data($pdo);
 }
 
-function wdms_import_schema_sql(PDO $pdo, string $sql): void {
-  $lines = preg_split("/\r\n|\n|\r/", $sql) ?: [];
-  $statement = '';
-
-  foreach ($lines as $line) {
-    $trimmed = trim($line);
-    if ($trimmed === '' || str_starts_with($trimmed, '--')) {
-      continue;
-    }
-
-    if (preg_match('/^DROP\s+TABLE/i', $trimmed)) {
-      continue;
-    }
-
-    $statement .= $line . "\n";
-    if (str_ends_with($trimmed, ';')) {
-      $pdo->exec($statement);
-      $statement = '';
-    }
+function wdms_seed_base_data(PDO $pdo): void {
+  $userCount = (int)$pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();
+  if ($userCount === 0) {
+    $stmt = $pdo->prepare("
+      INSERT INTO users(name, email, password, role, status)
+      VALUES(?, ?, ?, 'ADMIN', 'ACTIVE')
+    ");
+    $stmt->execute([
+      'Administrator',
+      'admin@wdms.com',
+      '$2y$10$go0YfIGnYoPXyzNG0okjQe1frdg8Y./hkVa0Dl6EO8pNEDmkvsFRK',
+    ]);
   }
 
-  if (trim($statement) !== '') {
-    $pdo->exec($statement);
+  $divisionCount = (int)$pdo->query("SELECT COUNT(*) FROM divisions")->fetchColumn();
+  if ($divisionCount === 0) {
+    $stmt = $pdo->prepare("INSERT INTO divisions(name, chief_user_id) VALUES(?, NULL)");
+    $stmt->execute(['Records Division']);
   }
 }
 
@@ -266,6 +366,10 @@ function wdms_normalize_legacy_roles(PDO $pdo): void {
 }
 
 function wdms_add_column_if_missing(PDO $pdo, string $table, string $column, string $definition): void {
+  if (!wdms_table_exists($pdo, $table)) {
+    return;
+  }
+
   $sql = "
     SELECT COUNT(*)
     FROM information_schema.COLUMNS
@@ -281,6 +385,10 @@ function wdms_add_column_if_missing(PDO $pdo, string $table, string $column, str
 }
 
 function wdms_ensure_varchar_length(PDO $pdo, string $table, string $column, int $minLength, bool $nullable, ?string $default = null): void {
+  if (!wdms_table_exists($pdo, $table)) {
+    return;
+  }
+
   $sql = "
     SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE, COLUMN_DEFAULT
     FROM information_schema.COLUMNS
