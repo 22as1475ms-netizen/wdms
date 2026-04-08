@@ -22,6 +22,8 @@ if (wdms_env_bool('DB_AUTO_BOOTSTRAP_SCHEMA', true)) {
 }
 
 function wdms_bootstrap_schema(PDO $pdo): void {
+  wdms_ensure_base_schema($pdo);
+
   wdms_add_column_if_missing($pdo, 'folders', 'deleted_at', "TIMESTAMP NULL");
   wdms_add_column_if_missing($pdo, 'folders', 'deleted_by', "INT NULL");
   wdms_add_column_if_missing($pdo, 'folders', 'storage_area', "VARCHAR(20) NOT NULL DEFAULT 'PRIVATE'");
@@ -184,6 +186,61 @@ function wdms_bootstrap_schema(PDO $pdo): void {
   if (wdms_env_bool('DB_AUTO_UNIFY_ROUTED_STORAGE', false)) {
     wdms_unify_routed_storage($pdo);
   }
+}
+
+function wdms_ensure_base_schema(PDO $pdo): void {
+  if (wdms_table_exists($pdo, 'users')
+    && wdms_table_exists($pdo, 'folders')
+    && wdms_table_exists($pdo, 'documents')
+    && wdms_table_exists($pdo, 'document_versions')
+    && wdms_table_exists($pdo, 'permissions')
+    && wdms_table_exists($pdo, 'audit_logs')) {
+    return;
+  }
+
+  $schemaFile = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'wdms.sql';
+  if (!is_file($schemaFile)) {
+    throw new RuntimeException('Base schema file wdms.sql was not found.');
+  }
+
+  wdms_import_schema_sql($pdo, (string)file_get_contents($schemaFile));
+}
+
+function wdms_import_schema_sql(PDO $pdo, string $sql): void {
+  $lines = preg_split("/\r\n|\n|\r/", $sql) ?: [];
+  $statement = '';
+
+  foreach ($lines as $line) {
+    $trimmed = trim($line);
+    if ($trimmed === '' || str_starts_with($trimmed, '--')) {
+      continue;
+    }
+
+    if (preg_match('/^DROP\s+TABLE/i', $trimmed)) {
+      continue;
+    }
+
+    $statement .= $line . "\n";
+    if (str_ends_with($trimmed, ';')) {
+      $pdo->exec($statement);
+      $statement = '';
+    }
+  }
+
+  if (trim($statement) !== '') {
+    $pdo->exec($statement);
+  }
+}
+
+function wdms_table_exists(PDO $pdo, string $table): bool {
+  $s = $pdo->prepare("
+    SELECT COUNT(*)
+    FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ?
+  ");
+  $s->execute([$table]);
+  return (int)$s->fetchColumn() > 0;
 }
 
 function wdms_unify_routed_storage(PDO $pdo): void {
